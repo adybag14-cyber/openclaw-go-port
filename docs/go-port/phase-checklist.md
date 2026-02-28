@@ -5,14 +5,14 @@
 - [x] Fork-equivalent repo created (`openclaw-go-port`)
 - [x] Upstream remote wired to `openclaw-rust`
 - [x] Master plan created (`docs/GO_PORT_PLAN.md`)
-- [ ] Tracking issue created (fill issue link after creation)
+- [x] Tracking issue created ([#1](https://github.com/adybag14-cyber/openclaw-go-port/issues/1))
 - [x] Skill created (`openclaw-go-port`)
 
 ## Phase 0: Setup and Baseline
 
 - [x] Baseline Rust module inventory captured
 - [x] Phase artifacts initialized (`plan`, `matrix`, `log`, `checklist`)
-- [ ] Phase 0 committed and pushed
+- [x] Phase 0 committed and pushed
 
 ## Phase 1: Bootstrap
 

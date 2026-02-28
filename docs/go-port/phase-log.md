@@ -14,6 +14,7 @@
   - `docs/go-port/parity-matrix.md`
   - `docs/go-port/phase-log.md`
 - Created local skill `openclaw-go-port` for repeatable migration workflow.
+- Opened tracker issue: `https://github.com/adybag14-cyber/openclaw-go-port/issues/1`.
 
 ### Phase 1 Started
 
