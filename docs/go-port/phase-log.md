@@ -246,3 +246,28 @@
   - `gofmt -w ./cmd ./internal`
   - `go test ./...`
   - `go vet ./...`
+
+### v2.0 Program Phase 5 Slice: WASM Runtime Lifecycle + Policy Depth
+
+- Hardened WASM sandbox decision model:
+  - `DeniedCapabilities` now included in sandbox decisions.
+  - policy checks aggregate all denied capabilities rather than returning on first failure.
+- Expanded WASM runtime model behavior:
+  - module lifecycle operations: `InstallModule`, `RemoveModule`.
+  - runtime policy mutation: `SetPolicy`.
+  - deterministic marketplace ordering.
+  - module metadata expanded with `WIT` and `EntryPoint`.
+- Added stricter execution policy enforcement:
+  - per-call `timeoutMs` and `memoryMB` checks against sandbox limits.
+  - capability union between module capabilities and `requiredCapabilities` execution request.
+  - explicit sandbox denials for policy-limit breaches.
+- Added runtime test coverage for:
+  - deterministic marketplace order,
+  - lifecycle install/remove flow,
+  - timeout/memory policy denials,
+  - policy override allowing network capability for approved modules.
+- Added sandbox test coverage for multi-capability denial aggregation.
+- Validation completed (Dockerized Go toolchain):
+  - `gofmt -w ./cmd ./internal`
+  - `go test ./...`
+  - `go vet ./...`

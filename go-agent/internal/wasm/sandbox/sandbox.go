@@ -13,8 +13,9 @@ type Policy struct {
 }
 
 type Decision struct {
-	Allowed bool   `json:"allowed"`
-	Reason  string `json:"reason,omitempty"`
+	Allowed            bool     `json:"allowed"`
+	Reason             string   `json:"reason,omitempty"`
+	DeniedCapabilities []string `json:"deniedCapabilities,omitempty"`
 }
 
 func DefaultPolicy() Policy {
@@ -27,16 +28,24 @@ func DefaultPolicy() Policy {
 }
 
 func (p Policy) EvaluateCapabilities(capabilities []string) Decision {
+	denied := make([]string, 0, 2)
 	for _, capability := range capabilities {
 		switch strings.ToLower(strings.TrimSpace(capability)) {
 		case "network":
 			if !p.AllowNetwork {
-				return Decision{Allowed: false, Reason: "network capability denied by sandbox policy"}
+				denied = append(denied, "network")
 			}
 		case "filesystem":
 			if !p.AllowFilesystem {
-				return Decision{Allowed: false, Reason: "filesystem capability denied by sandbox policy"}
+				denied = append(denied, "filesystem")
 			}
+		}
+	}
+	if len(denied) > 0 {
+		return Decision{
+			Allowed:            false,
+			Reason:             "one or more capabilities denied by sandbox policy",
+			DeniedCapabilities: denied,
 		}
 	}
 	return Decision{Allowed: true}
