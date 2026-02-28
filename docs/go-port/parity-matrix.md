@@ -33,3 +33,10 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 - In-progress: `0`
 - Not-started: `0`
 - Deferred: `0`
+
+## Post-v2 Continuation Status (Issue #3)
+
+- Slice 1 complete: edge contract hardening (`edge.swarm.plan`, `edge.multimodal.inspect`, `edge.voice.transcribe`, `edge.quantum.status`).
+- Slice 2 complete: security policy expressiveness (`group:*` tool policy matching with deterministic precedence).
+- Slice 3 complete: WASM runtime depth (`wazero` compiled execution path under policy gates).
+- Slice 4 complete: doctor/security audit depth (expanded audit checks, deep probes, parity corpus tests, and `doctor.checks` diagnostics output).
