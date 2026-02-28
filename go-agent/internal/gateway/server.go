@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	osexec "os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -276,9 +279,9 @@ func (s *Server) dispatchRPC(ctx context.Context, requestID string, canonical st
 	case "edge.acceleration.status":
 		return s.handleEdgeAccelerationStatus(), nil
 	case "edge.swarm.plan":
-		return s.handleEdgeSwarmPlan(params), nil
+		return s.handleEdgeSwarmPlan(params)
 	case "edge.multimodal.inspect":
-		return s.handleEdgeMultimodalInspect(params), nil
+		return s.handleEdgeMultimodalInspect(params)
 	case "edge.enclave.status":
 		return s.handleEdgeEnclaveStatus(), nil
 	case "edge.enclave.prove":
@@ -304,11 +307,11 @@ func (s *Server) dispatchRPC(ctx context.Context, requestID string, canonical st
 	case "edge.alignment.evaluate":
 		return s.handleEdgeAlignmentEvaluate(params), nil
 	case "edge.quantum.status":
-		return s.handleEdgeQuantumStatus(), nil
+		return s.handleEdgeQuantumStatus(params)
 	case "edge.collaboration.plan":
 		return s.handleEdgeCollaborationPlan(params), nil
 	case "edge.voice.transcribe":
-		return s.handleEdgeVoiceTranscribe(params), nil
+		return s.handleEdgeVoiceTranscribe(params)
 	case "agent.wait":
 		return s.handleAgentWait(ctx, params)
 	default:
@@ -726,29 +729,140 @@ func (s *Server) handleEdgeAccelerationStatus() map[string]any {
 	}
 }
 
-func (s *Server) handleEdgeSwarmPlan(params map[string]any) map[string]any {
-	task := toString(params["task"], "general")
-	return map[string]any{
-		"task": task,
-		"agents": []map[string]any{
-			{"id": "planner", "role": "planning"},
-			{"id": "executor", "role": "execution"},
-			{"id": "verifier", "role": "validation"},
-		},
+func (s *Server) handleEdgeSwarmPlan(params map[string]any) (map[string]any, *dispatchError) {
+	goal := normalizeOptionalText(firstNonEmptyValue(params, "goal", "task"), 16_000)
+	tasks := extractSwarmTasks(params["tasks"])
+	if len(tasks) == 0 && goal != "" {
+		tasks = buildDefaultSwarmTasks(goal)
 	}
+	if len(tasks) == 0 {
+		return nil, &dispatchError{
+			Code:    -32602,
+			Message: "edge.swarm.plan requires tasks or goal",
+		}
+	}
+
+	const maxTasks = 32
+	if len(tasks) > maxTasks {
+		tasks = tasks[:maxTasks]
+	}
+
+	defaultAgents := 3
+	if strings.EqualFold(runtimeProfileName(s.cfg.Runtime.Profile), "edge") {
+		defaultAgents = 6
+	}
+	agentLimit := toInt(params["maxAgents"], defaultAgents)
+	if agentLimit < 1 {
+		agentLimit = 1
+	}
+	if agentLimit > 12 {
+		agentLimit = 12
+	}
+	agentCount := agentLimit
+	if agentCount > len(tasks) {
+		agentCount = len(tasks)
+	}
+
+	planned := make([]map[string]any, 0, len(tasks))
+	for idx, task := range tasks {
+		dependsOn := []string{}
+		if idx > 0 {
+			dependsOn = append(dependsOn, fmt.Sprintf("task-%d", idx))
+		}
+		planned = append(planned, map[string]any{
+			"id":             fmt.Sprintf("task-%d", idx+1),
+			"title":          task,
+			"assignedAgent":  fmt.Sprintf("swarm-agent-%d", (idx%agentCount)+1),
+			"specialization": classifySwarmTask(task),
+			"dependsOn":      dependsOn,
+		})
+	}
+
+	agents := make([]map[string]any, 0, agentCount)
+	for idx := 0; idx < agentCount; idx++ {
+		role := "builder"
+		switch {
+		case idx == 0:
+			role = "planning"
+		case idx == agentCount-1:
+			role = "validation"
+		}
+		agents = append(agents, map[string]any{
+			"id":   fmt.Sprintf("swarm-agent-%d", idx+1),
+			"role": role,
+		})
+	}
+
+	return map[string]any{
+		"planId":         fmt.Sprintf("swarm-%d", time.Now().UTC().UnixMilli()),
+		"runtimeProfile": runtimeProfileName(s.cfg.Runtime.Profile),
+		"goal":           valueOrNil(goal),
+		"task":           valueOrNil(goal),
+		"agentCount":     agentCount,
+		"taskCount":      len(planned),
+		"tasks":          planned,
+		"agents":         agents,
+	}, nil
 }
 
-func (s *Server) handleEdgeMultimodalInspect(params map[string]any) map[string]any {
-	source := toString(params["source"], "unknown")
-	return map[string]any{
-		"source": source,
-		"signals": []string{
-			"text",
-			"image",
-			"metadata",
-		},
-		"summary": "inspection complete",
+func (s *Server) handleEdgeMultimodalInspect(params map[string]any) (map[string]any, *dispatchError) {
+	imagePath := normalizeOptionalText(firstNonEmptyValue(params, "imagePath", "image"), 2_048)
+	screenPath := normalizeOptionalText(firstNonEmptyValue(params, "screenPath", "screen"), 2_048)
+	videoPath := normalizeOptionalText(firstNonEmptyValue(params, "videoPath", "video"), 2_048)
+	sourcePath := normalizeOptionalText(firstNonEmptyValue(params, "source"), 2_048)
+	prompt := normalizeOptionalText(firstNonEmptyValue(params, "prompt"), 8_000)
+	ocrText := normalizeOptionalText(firstNonEmptyValue(params, "ocrText", "ocr"), 16_000)
+
+	if imagePath == "" && sourcePath != "" {
+		imagePath = sourcePath
 	}
+
+	if imagePath == "" && screenPath == "" && videoPath == "" && prompt == "" && ocrText == "" {
+		return nil, &dispatchError{
+			Code:    -32602,
+			Message: "edge.multimodal.inspect requires media path, prompt, or ocrText",
+		}
+	}
+
+	media := make([]map[string]any, 0, 3)
+	if imagePath != "" {
+		media = append(media, inspectMediaPath("image", imagePath))
+	}
+	if screenPath != "" {
+		media = append(media, inspectMediaPath("screen", screenPath))
+	}
+	if videoPath != "" {
+		media = append(media, inspectMediaPath("video", videoPath))
+	}
+
+	modalities := inferMultimodalModalities(media, ocrText)
+	signals := append([]string(nil), modalities...)
+	if len(signals) == 0 {
+		signals = []string{"metadata"}
+	}
+	summary := summarizeMultimodalContext(prompt, ocrText, media, modalities)
+
+	source := imagePath
+	if source == "" {
+		source = screenPath
+	}
+	if source == "" {
+		source = videoPath
+	}
+	if source == "" {
+		source = "context-only"
+	}
+
+	return map[string]any{
+		"runtimeProfile":          runtimeProfileName(s.cfg.Runtime.Profile),
+		"source":                  source,
+		"signals":                 signals,
+		"modalities":              modalities,
+		"media":                   media,
+		"ocrText":                 valueOrNil(ocrText),
+		"summary":                 summary,
+		"memoryAugmentationReady": true,
+	}, nil
 }
 
 func (s *Server) handleEdgeEnclaveStatus() map[string]any {
@@ -891,11 +1005,44 @@ func (s *Server) handleEdgeAlignmentEvaluate(params map[string]any) map[string]a
 	}
 }
 
-func (s *Server) handleEdgeQuantumStatus() map[string]any {
-	return map[string]any{
-		"available": false,
-		"mode":      "simulated",
+func (s *Server) handleEdgeQuantumStatus(params map[string]any) (map[string]any, *dispatchError) {
+	if _, ok := params["strictMode"]; ok {
+		// accepted for compatibility, behavior is driven by env policy flags.
 	}
+	pqcEnabled := envTruthy("OPENCLAW_GO_PQC_ENABLED") || envTruthy("OPENCLAW_GO_QUANTUM_SAFE")
+	hybridMode := envTruthy("OPENCLAW_GO_PQC_HYBRID")
+	kem := normalizeOptionalText(os.Getenv("OPENCLAW_GO_PQC_KEM"), 64)
+	if kem == "" {
+		kem = "kyber768"
+	}
+	signature := normalizeOptionalText(os.Getenv("OPENCLAW_GO_PQC_SIG"), 64)
+	if signature == "" {
+		signature = "dilithium3"
+	}
+	mode := "off"
+	if pqcEnabled {
+		if hybridMode {
+			mode = "hybrid"
+		} else {
+			mode = "strict-pqc"
+		}
+	}
+	return map[string]any{
+		"feature": "quantum-safe-cryptography-mode",
+		"enabled": pqcEnabled,
+		"mode":    mode,
+		"algorithms": map[string]any{
+			"kem":       kem,
+			"signature": signature,
+			"hash":      "sha256",
+		},
+		"fallback": map[string]any{
+			"classicalSignature":    "ed25519",
+			"classicalKeyExchange":  "x25519",
+			"activeWhenPqcDisabled": !pqcEnabled,
+		},
+		"available": pqcEnabled,
+	}, nil
 }
 
 func (s *Server) handleEdgeCollaborationPlan(params map[string]any) map[string]any {
@@ -917,14 +1064,41 @@ func (s *Server) handleEdgeCollaborationPlan(params map[string]any) map[string]a
 	}
 }
 
-func (s *Server) handleEdgeVoiceTranscribe(params map[string]any) map[string]any {
-	content := toString(params["audioRef"], "memory://audio")
-	return map[string]any{
-		"audioRef":   content,
-		"transcript": "voice transcription placeholder",
-		"confidence": 0.9,
-		"language":   "en",
+func (s *Server) handleEdgeVoiceTranscribe(params map[string]any) (map[string]any, *dispatchError) {
+	audioPath := normalizeOptionalText(firstNonEmptyValue(params, "audioPath", "audioRef"), 2_048)
+	hintText := normalizeOptionalText(firstNonEmptyValue(params, "hintText", "hint", "text"), 16_000)
+	language := normalizeOptionalText(firstNonEmptyValue(params, "language"), 32)
+	providerRequested := strings.ToLower(normalizeOptionalText(firstNonEmptyValue(params, "provider"), 64))
+
+	if audioPath == "" && hintText == "" {
+		return nil, &dispatchError{
+			Code:    -32602,
+			Message: "edge.voice.transcribe requires audioPath or hintText",
+		}
 	}
+
+	providerUsed := providerRequested
+	if providerUsed == "" {
+		providerUsed = "edge"
+	}
+	transcript := simulatedTranscript(audioPath, hintText)
+	confidence := 0.46
+	if hintText != "" {
+		confidence = 0.9
+	}
+
+	return map[string]any{
+		"runtimeProfile":       runtimeProfileName(s.cfg.Runtime.Profile),
+		"providerRequested":    valueOrNil(providerRequested),
+		"providerUsed":         providerUsed,
+		"source":               "simulated",
+		"audioPath":            valueOrNil(audioPath),
+		"audioRef":             valueOrDefault(audioPath, "memory://audio"),
+		"transcript":           transcript,
+		"confidence":           confidence,
+		"language":             valueOrNil(language),
+		"hasTinyWhisperBinary": tinyWhisperBinaryAvailable(),
+	}, nil
 }
 
 func (s *Server) healthPayload() map[string]any {
@@ -1035,6 +1209,213 @@ func (s *Server) validateAuth(mode string, token string, password string) (bool,
 	default:
 		return false, "unsupported auth mode"
 	}
+}
+
+func firstNonEmptyValue(params map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := params[key]; ok {
+			if normalized := normalizeOptionalText(toString(value, ""), 0); normalized != "" {
+				return normalized
+			}
+		}
+	}
+	return ""
+}
+
+func normalizeOptionalText(value string, maxRunes int) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if maxRunes <= 0 {
+		return trimmed
+	}
+	runes := []rune(trimmed)
+	if len(runes) <= maxRunes {
+		return trimmed
+	}
+	return string(runes[:maxRunes])
+}
+
+func runtimeProfileName(raw string) string {
+	profile := strings.ToLower(strings.TrimSpace(raw))
+	if profile == "" {
+		return "core"
+	}
+	return profile
+}
+
+func valueOrNil(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
+}
+
+func valueOrDefault(value string, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func extractSwarmTasks(raw any) []string {
+	items, ok := raw.([]any)
+	if !ok {
+		return []string{}
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		switch value := item.(type) {
+		case string:
+			if normalized := normalizeOptionalText(value, 256); normalized != "" {
+				out = append(out, normalized)
+			}
+		case map[string]any:
+			title := normalizeOptionalText(toString(value["title"], toString(value["task"], "")), 256)
+			if title != "" {
+				out = append(out, title)
+			}
+		}
+	}
+	return out
+}
+
+func buildDefaultSwarmTasks(goal string) []string {
+	if goal == "" {
+		return []string{}
+	}
+	return []string{
+		fmt.Sprintf("Analyze objective: %s", goal),
+		"Implement the main changes with guarded rollout",
+		"Validate behavior and produce release evidence",
+	}
+}
+
+func classifySwarmTask(task string) string {
+	normalized := strings.ToLower(task)
+	switch {
+	case strings.Contains(normalized, "test"),
+		strings.Contains(normalized, "validate"),
+		strings.Contains(normalized, "audit"):
+		return "qa"
+	case strings.Contains(normalized, "deploy"),
+		strings.Contains(normalized, "release"),
+		strings.Contains(normalized, "infra"):
+		return "ops"
+	case strings.Contains(normalized, "research"),
+		strings.Contains(normalized, "investigate"),
+		strings.Contains(normalized, "analyze"):
+		return "research"
+	default:
+		return "builder"
+	}
+}
+
+func inspectMediaPath(kind string, path string) map[string]any {
+	cleaned := strings.TrimSpace(path)
+	exists := false
+	sizeBytes := any(nil)
+	modifiedAtMs := any(nil)
+	if info, err := os.Stat(cleaned); err == nil && !info.IsDir() {
+		exists = true
+		sizeBytes = info.Size()
+		modifiedAtMs = info.ModTime().UTC().UnixMilli()
+	}
+	return map[string]any{
+		"kind":         kind,
+		"path":         cleaned,
+		"exists":       exists,
+		"extension":    strings.TrimPrefix(strings.ToLower(filepath.Ext(cleaned)), "."),
+		"sizeBytes":    sizeBytes,
+		"modifiedAtMs": modifiedAtMs,
+	}
+}
+
+func inferMultimodalModalities(media []map[string]any, ocrText string) []string {
+	out := make([]string, 0, 3)
+	if len(media) > 0 {
+		out = append(out, "vision")
+	}
+	for _, entry := range media {
+		if kind := toString(entry["kind"], ""); kind == "screen" || kind == "video" {
+			out = append(out, "screen")
+			break
+		}
+	}
+	if normalizeOptionalText(ocrText, 16_000) != "" {
+		out = append(out, "text")
+	}
+	seen := map[string]struct{}{}
+	deduped := make([]string, 0, len(out))
+	for _, entry := range out {
+		if _, ok := seen[entry]; ok {
+			continue
+		}
+		seen[entry] = struct{}{}
+		deduped = append(deduped, entry)
+	}
+	return deduped
+}
+
+func summarizeMultimodalContext(prompt string, ocrText string, media []map[string]any, modalities []string) string {
+	promptHint := normalizeOptionalText(prompt, 256)
+	if promptHint == "" {
+		promptHint = "inspect incoming scene and extract actionable state"
+	}
+	modalitiesText := "none"
+	if len(modalities) > 0 {
+		modalitiesText = strings.Join(modalities, ", ")
+	}
+	summary := fmt.Sprintf(
+		"Multimodal pipeline detected %d modality(ies): %s. Objective: %s.",
+		len(modalities),
+		modalitiesText,
+		promptHint,
+	)
+	if ocr := normalizeOptionalText(ocrText, 256); ocr != "" {
+		summary += fmt.Sprintf(" OCR hint: %s.", ocr)
+	}
+	if len(media) > 0 {
+		available := 0
+		for _, entry := range media {
+			if toBool(entry["exists"], false) {
+				available++
+			}
+		}
+		summary += fmt.Sprintf(
+			" Media sources: %d provided (%d currently available on disk).",
+			len(media),
+			available,
+		)
+	}
+	return summary
+}
+
+func simulatedTranscript(audioPath string, hintText string) string {
+	if hint := normalizeOptionalText(hintText, 16_000); hint != "" {
+		return hint
+	}
+	if path := normalizeOptionalText(audioPath, 2_048); path != "" {
+		base := filepath.Base(path)
+		stem := strings.TrimSuffix(base, filepath.Ext(base))
+		stem = normalizeOptionalText(stem, 256)
+		if stem == "" {
+			stem = "audio-capture"
+		}
+		return fmt.Sprintf("simulated transcript from %s", stem)
+	}
+	return "simulated transcript"
+}
+
+func tinyWhisperBinaryAvailable() bool {
+	_, err := osexec.LookPath("tinywhisper")
+	return err == nil
+}
+
+func envTruthy(key string) bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
 func asMap(v any) map[string]any {

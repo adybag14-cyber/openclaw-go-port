@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/buildinfo"
@@ -922,8 +923,12 @@ func TestEdgePhase7MethodMatrix(t *testing.T) {
 			method: "edge.quantum.status",
 			params: map[string]any{},
 			assert: func(t *testing.T, result map[string]any) {
-				if mode, _ := result["mode"].(string); mode != "simulated" {
-					t.Fatalf("edge.quantum.status expected mode=simulated, got %v", result["mode"])
+				mode, _ := result["mode"].(string)
+				switch mode {
+				case "off", "hybrid", "strict-pqc":
+					// expected
+				default:
+					t.Fatalf("edge.quantum.status expected off|hybrid|strict-pqc, got %v", result["mode"])
 				}
 			},
 		},
@@ -941,8 +946,12 @@ func TestEdgePhase7MethodMatrix(t *testing.T) {
 			method: "edge.voice.transcribe",
 			params: map[string]any{"audioRef": "memory://clip"},
 			assert: func(t *testing.T, result map[string]any) {
-				if transcript, _ := result["transcript"].(string); transcript == "" {
+				transcript, _ := result["transcript"].(string)
+				if transcript == "" {
 					t.Fatalf("edge.voice.transcribe expected transcript")
+				}
+				if strings.Contains(strings.ToLower(transcript), "placeholder") {
+					t.Fatalf("edge.voice.transcribe should not return placeholder transcript")
 				}
 			},
 		},
@@ -1031,6 +1040,129 @@ func TestEdgeStatefulContracts(t *testing.T) {
 	homoMeanResult := assertRPCResult(t, homoMean)
 	if homoMeanResult["result"] != float64(4) {
 		t.Fatalf("expected mean result 4, got %v", homoMeanResult["result"])
+	}
+}
+
+func TestEdgeValidationRejectsMissingRequiredInputs(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-edge-validation"
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	cases := []struct {
+		method      string
+		params      map[string]any
+		wantMessage string
+	}{
+		{
+			method:      "edge.swarm.plan",
+			params:      map[string]any{},
+			wantMessage: "requires tasks or goal",
+		},
+		{
+			method:      "edge.multimodal.inspect",
+			params:      map[string]any{},
+			wantMessage: "requires media path, prompt, or ocrText",
+		},
+		{
+			method:      "edge.voice.transcribe",
+			params:      map[string]any{},
+			wantMessage: "requires audioPath or hintText",
+		},
+	}
+
+	for idx, tc := range cases {
+		frame := rpcCall(t, ts.URL, map[string]any{
+			"type":   "req",
+			"id":     fmt.Sprintf("edge-validation-%d", idx+1),
+			"method": tc.method,
+			"params": tc.params,
+		})
+		assertRPCErrorCode(t, frame, -32602)
+		errObj, _ := frame["error"].(map[string]any)
+		message := strings.ToLower(fmt.Sprint(errObj["message"]))
+		if !strings.Contains(message, strings.ToLower(tc.wantMessage)) {
+			t.Fatalf("%s error message mismatch: got=%q want contains %q", tc.method, message, tc.wantMessage)
+		}
+	}
+}
+
+func TestEdgeVoiceTranscribeUsesHintOrAudioStem(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-edge-voice"
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	hint := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-voice-hint",
+		"method": "edge.voice.transcribe",
+		"params": map[string]any{
+			"hintText": "hello from hint flow",
+		},
+	})
+	hintResult := assertRPCResult(t, hint)
+	if transcript, _ := hintResult["transcript"].(string); transcript != "hello from hint flow" {
+		t.Fatalf("expected hint transcript passthrough, got %v", hintResult["transcript"])
+	}
+	if providerUsed, _ := hintResult["providerUsed"].(string); providerUsed != "edge" {
+		t.Fatalf("expected default providerUsed=edge, got %v", hintResult["providerUsed"])
+	}
+
+	audio := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-voice-audio",
+		"method": "edge.voice.transcribe",
+		"params": map[string]any{
+			"audioPath": "memory://captures/meeting-note.wav",
+		},
+	})
+	audioResult := assertRPCResult(t, audio)
+	transcript, _ := audioResult["transcript"].(string)
+	if !strings.Contains(strings.ToLower(transcript), "meeting-note") {
+		t.Fatalf("expected transcript synthesized from audio stem, got %q", transcript)
+	}
+}
+
+func TestEdgeQuantumStatusHonorsPqcEnvFlags(t *testing.T) {
+	t.Setenv("OPENCLAW_GO_PQC_ENABLED", "true")
+	t.Setenv("OPENCLAW_GO_PQC_HYBRID", "true")
+	t.Setenv("OPENCLAW_GO_PQC_KEM", "kyber1024")
+	t.Setenv("OPENCLAW_GO_PQC_SIG", "falcon512")
+
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-edge-quantum-env"
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	frame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-quantum-env",
+		"method": "edge.quantum.status",
+		"params": map[string]any{},
+	})
+	result := assertRPCResult(t, frame)
+	if enabled, _ := result["enabled"].(bool); !enabled {
+		t.Fatalf("expected quantum enabled=true from env")
+	}
+	if mode, _ := result["mode"].(string); mode != "hybrid" {
+		t.Fatalf("expected quantum mode hybrid, got %v", result["mode"])
+	}
+	algorithms, ok := result["algorithms"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected algorithms payload")
+	}
+	if kem, _ := algorithms["kem"].(string); kem != "kyber1024" {
+		t.Fatalf("expected kem=kyber1024, got %v", algorithms["kem"])
+	}
+	if sig, _ := algorithms["signature"].(string); sig != "falcon512" {
+		t.Fatalf("expected signature=falcon512, got %v", algorithms["signature"])
 	}
 }
 

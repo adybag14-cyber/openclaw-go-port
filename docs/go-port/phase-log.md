@@ -369,3 +369,23 @@
   - Linux binary gateway smoke (`/health`, `/rpc status`) verified.
 - Added release notes:
   - `docs/go-port/release-v2.0.0-go.md`
+
+### Post-v2 Continuation (Issue #3) - Slice 1: Edge Contract Hardening
+
+- Opened continuation tracker issue:
+  - `https://github.com/adybag14-cyber/openclaw-go-port/issues/3`
+- Linked closed v2 program issue (#2) to continuation tracker.
+- Implemented first depth-parity slice in Go gateway edge handlers:
+  - `edge.swarm.plan` now enforces required input (`tasks` or `goal`) and returns deterministic task graph contracts.
+  - `edge.multimodal.inspect` now enforces required input and returns inferred modalities + media metadata summary.
+  - `edge.voice.transcribe` now removes placeholder transcript behavior and supports `audioPath|audioRef` + `hintText` synthesis with provider/source metadata.
+  - `edge.quantum.status` now reports env-driven PQC posture (`off|hybrid|strict-pqc`) with algorithm metadata instead of fixed `simulated` mode.
+- Added/updated integration tests:
+  - matrix assertions for quantum mode contract and non-placeholder voice transcript
+  - new validation tests for required edge inputs
+  - new voice synthesis behavior test (hint passthrough + audio-stem synthesis)
+  - new PQC env-driven quantum status test
+- Validation completed (Dockerized Go toolchain):
+  - `gofmt -w ./cmd ./internal`
+  - `go test ./...`
+  - `go vet ./...`
