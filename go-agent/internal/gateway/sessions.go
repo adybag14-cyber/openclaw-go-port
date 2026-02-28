@@ -10,6 +10,7 @@ import (
 type ClientSession struct {
 	ID            string    `json:"id"`
 	ClientID      string    `json:"clientId,omitempty"`
+	Channel       string    `json:"channel,omitempty"`
 	Role          string    `json:"role"`
 	Scopes        []string  `json:"scopes"`
 	AuthMode      string    `json:"authMode"`
@@ -32,12 +33,13 @@ func NewSessionRegistry() *SessionRegistry {
 	}
 }
 
-func (r *SessionRegistry) Create(clientID, role string, scopes []string, authMode string, authenticated bool) ClientSession {
+func (r *SessionRegistry) Create(clientID, channel, role string, scopes []string, authMode string, authenticated bool) ClientSession {
 	now := time.Now().UTC()
 	id := fmt.Sprintf("sess-%06d", r.seq.Add(1))
 	session := ClientSession{
 		ID:            id,
 		ClientID:      clientID,
+		Channel:       channel,
 		Role:          role,
 		Scopes:        append([]string(nil), scopes...),
 		AuthMode:      authMode,
@@ -51,6 +53,18 @@ func (r *SessionRegistry) Create(clientID, role string, scopes []string, authMod
 	r.sessions[id] = session
 	r.mu.Unlock()
 	return session
+}
+
+func (r *SessionRegistry) UpdateChannel(id string, channel string) {
+	r.mu.Lock()
+	session, ok := r.sessions[id]
+	if !ok {
+		r.mu.Unlock()
+		return
+	}
+	session.Channel = channel
+	r.sessions[id] = session
+	r.mu.Unlock()
 }
 
 func (r *SessionRegistry) Touch(id string) {

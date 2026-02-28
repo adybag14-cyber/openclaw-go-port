@@ -12,10 +12,13 @@ import (
 
 	webbridge "github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/bridge/web"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/buildinfo"
+	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/channels"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/config"
+	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/memory"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/protocol"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/rpc"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/scheduler"
+	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/state"
 	toolruntime "github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/tools/runtime"
 )
 
@@ -28,6 +31,9 @@ type Server struct {
 	sessions  *SessionRegistry
 	scheduler *scheduler.Scheduler
 	tools     *toolruntime.Runtime
+	channels  *channels.Registry
+	memory    *memory.Store
+	state     *state.Store
 	webLogin  *webbridge.Manager
 }
 
@@ -39,6 +45,9 @@ func New(cfg config.Config, build buildinfo.Info) *Server {
 		methods:   rpc.DefaultRegistry(),
 		sessions:  NewSessionRegistry(),
 		tools:     toolruntime.NewDefault(),
+		channels:  channels.NewRegistry(cfg.Channels.Telegram.BotToken, cfg.Channels.Telegram.DefaultTarget),
+		memory:    memory.NewStore(cfg.Runtime.StatePath, 10_000),
+		state:     state.NewStore(),
 		webLogin:  webbridge.NewManager(10 * time.Minute),
 	}
 
@@ -175,8 +184,16 @@ func (s *Server) dispatchRPC(ctx context.Context, requestID string, canonical st
 		return s.handleConnect(params)
 	case "sessions.list":
 		return s.handleSessionsList(), nil
+	case "sessions.history":
+		return s.handleSessionsHistory(params), nil
+	case "chat.history":
+		return s.handleChatHistory(params), nil
 	case "session.status":
 		return s.handleSessionStatus(params)
+	case "channels.status":
+		return s.handleChannelsStatus(), nil
+	case "channels.logout":
+		return s.handleChannelsLogout(ctx, params)
 	case "tools.catalog":
 		return map[string]any{
 			"tools": s.tools.Catalog(),
@@ -190,7 +207,7 @@ func (s *Server) dispatchRPC(ctx context.Context, requestID string, canonical st
 		return s.handleOAuthComplete(params)
 	case "auth.oauth.logout":
 		return s.handleOAuthLogout(params), nil
-	case "browser.request", "browser.open", "agent", "send", "chat.send":
+	case "browser.request", "browser.open", "agent", "send", "chat.send", "sessions.send":
 		return s.enqueueRuntimeRequest(requestID, canonical, params)
 	case "agent.wait":
 		return s.handleAgentWait(ctx, params)
@@ -210,6 +227,7 @@ func (s *Server) dispatchRPC(ctx context.Context, requestID string, canonical st
 
 func (s *Server) handleConnect(params map[string]any) (map[string]any, *dispatchError) {
 	role := toString(params["role"], "client")
+	channel := strings.ToLower(toString(params["channel"], "webchat"))
 	scopes := toStringSlice(params["scopes"])
 	clientID := toString(asMap(params["client"])["id"], "")
 	token := toString(asMap(params["auth"])["token"], toString(params["token"], ""))
@@ -227,11 +245,12 @@ func (s *Server) handleConnect(params map[string]any) (map[string]any, *dispatch
 			},
 		}
 	}
-	session := s.sessions.Create(clientID, role, scopes, mode, authenticated)
+	session := s.sessions.Create(clientID, channel, role, scopes, mode, authenticated)
 
 	return map[string]any{
 		"sessionId":         session.ID,
 		"role":              session.Role,
+		"channel":           session.Channel,
 		"scopes":            session.Scopes,
 		"authMode":          session.AuthMode,
 		"authenticated":     session.Authenticated,
@@ -246,6 +265,59 @@ func (s *Server) handleSessionsList() map[string]any {
 		"count": len(items),
 		"items": items,
 	}
+}
+
+func (s *Server) handleSessionsHistory(params map[string]any) map[string]any {
+	sessionID := toString(params["sessionId"], "")
+	limit := toInt(params["limit"], 50)
+	items := s.memory.HistoryBySession(sessionID, limit)
+	return map[string]any{
+		"sessionId": sessionID,
+		"count":     len(items),
+		"items":     items,
+	}
+}
+
+func (s *Server) handleChatHistory(params map[string]any) map[string]any {
+	channel := strings.ToLower(toString(params["channel"], ""))
+	limit := toInt(params["limit"], 50)
+	items := s.memory.HistoryByChannel(channel, limit)
+	return map[string]any{
+		"channel": channel,
+		"count":   len(items),
+		"items":   items,
+	}
+}
+
+func (s *Server) handleChannelsStatus() map[string]any {
+	status := s.channels.Status()
+	return map[string]any{
+		"count": len(status),
+		"items": status,
+	}
+}
+
+func (s *Server) handleChannelsLogout(ctx context.Context, params map[string]any) (map[string]any, *dispatchError) {
+	channel := strings.ToLower(toString(params["channel"], ""))
+	if channel == "" {
+		return nil, &dispatchError{
+			Code:    -32602,
+			Message: "missing channel",
+		}
+	}
+	accountID := toString(params["accountId"], "")
+	ok, err := s.channels.Logout(ctx, channel, accountID)
+	if err != nil {
+		return nil, &dispatchError{
+			Code:    -32040,
+			Message: err.Error(),
+			Details: map[string]any{"channel": channel},
+		}
+	}
+	return map[string]any{
+		"ok":      ok,
+		"channel": channel,
+	}, nil
 }
 
 func (s *Server) handleSessionStatus(params map[string]any) (map[string]any, *dispatchError) {
@@ -347,7 +419,17 @@ func (s *Server) enqueueRuntimeRequest(requestID string, canonical string, param
 		}
 	}
 
-	job, err := s.scheduler.Submit(requestID, toString(params["sessionId"], ""), canonical, params)
+	sessionID := toString(params["sessionId"], "")
+	if canonical == "sessions.send" {
+		canonical = "send"
+	}
+	if (canonical == "send" || canonical == "chat.send") && strings.TrimSpace(toString(params["channel"], "")) == "" && sessionID != "" {
+		if session, ok := s.sessions.Get(sessionID); ok && strings.TrimSpace(session.Channel) != "" {
+			params["channel"] = session.Channel
+		}
+	}
+
+	job, err := s.scheduler.Submit(requestID, sessionID, canonical, params)
 	if err != nil {
 		return nil, &dispatchError{
 			Code:    -32020,
@@ -412,15 +494,44 @@ func (s *Server) executeScheduledJob(ctx context.Context, job scheduler.Job) (an
 		if err != nil {
 			return nil, err
 		}
+		s.recordMemory(job, "assistant", fmt.Sprintf("browser bridge %s", job.Method), map[string]any{
+			"provider": result.Provider,
+			"output":   result.Output,
+		})
 		return map[string]any{
 			"provider": result.Provider,
 			"output":   result.Output,
 		}, nil
-	case "agent", "send", "chat.send":
+	case "agent":
+		message := toString(job.Params["message"], toString(job.Params["prompt"], ""))
+		s.recordMemory(job, "user", message, job.Params)
 		return map[string]any{
 			"status": "accepted",
 			"method": job.Method,
 			"echo":   job.Params,
+		}, nil
+	case "send", "chat.send":
+		channel := strings.ToLower(toString(job.Params["channel"], "webchat"))
+		message := toString(job.Params["message"], toString(job.Params["text"], ""))
+		receipt, err := s.channels.Send(ctx, channels.SendRequest{
+			Channel:   channel,
+			To:        toString(job.Params["to"], ""),
+			Message:   message,
+			SessionID: job.SessionID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if job.SessionID != "" {
+			s.sessions.UpdateChannel(job.SessionID, receipt.Channel)
+		}
+		s.recordMemory(job, "user", message, map[string]any{
+			"receipt": receipt,
+		})
+		return map[string]any{
+			"status": "accepted",
+			"method": job.Method,
+			"result": receipt,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported scheduled method: %s", job.Method)
@@ -452,11 +563,41 @@ func (s *Server) statusPayload() map[string]any {
 		"sessions": map[string]any{
 			"count": s.sessions.Count(),
 		},
+		"channels": map[string]any{
+			"count": len(s.channels.Status()),
+			"items": s.channels.Status(),
+		},
+		"memory": map[string]any{
+			"count":     s.memory.Count(),
+			"lastError": s.memory.LastError(),
+		},
+		"state": map[string]any{
+			"sessions": s.state.List(),
+		},
 		"scheduler": s.scheduler.SnapshotStats(),
 		"webLogin": map[string]any{
 			"authorized": s.webLogin.HasAuthorizedSession(),
 		},
 	}
+}
+
+func (s *Server) recordMemory(job scheduler.Job, role string, text string, payload map[string]any) {
+	channel := strings.ToLower(toString(job.Params["channel"], ""))
+	if channel == "" && job.SessionID != "" {
+		if session, ok := s.sessions.Get(job.SessionID); ok {
+			channel = strings.ToLower(session.Channel)
+		}
+	}
+	entry := memory.MessageEntry{
+		SessionID: job.SessionID,
+		Channel:   channel,
+		Method:    job.Method,
+		Role:      role,
+		Text:      text,
+		Payload:   payload,
+	}
+	s.memory.Append(entry)
+	s.state.TouchMessage(job.SessionID, channel, job.Method, text)
 }
 
 func (s *Server) resolveAuthMode() string {
@@ -551,6 +692,19 @@ func toDurationMs(v any, fallbackMs int64) time.Duration {
 		return time.Duration(int64(value)) * time.Millisecond
 	default:
 		return time.Duration(fallbackMs) * time.Millisecond
+	}
+}
+
+func toInt(v any, fallback int) int {
+	switch value := v.(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	case int64:
+		return int(value)
+	default:
+		return fallback
 	}
 }
 

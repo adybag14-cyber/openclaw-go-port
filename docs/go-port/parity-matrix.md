@@ -13,11 +13,11 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 | `src/runtime.rs` | `go-agent/internal/runtime` | not-started | Depends on protocol + scheduler |
 | `src/tool_registry.rs` | `go-agent/internal/tools` | in-progress | `tools.catalog` runtime provider catalog scaffold |
 | `src/tool_runtime.rs` | `go-agent/internal/tools/runtime` | in-progress | Provider interface + builtin browser bridge runtime execution |
-| `src/telegram_bridge.rs` | `go-agent/internal/channels/telegram` | not-started | Phase 5 target |
-| `src/channels/mod.rs` | `go-agent/internal/channels` | not-started | Phase 5 target |
-| `src/memory.rs` | `go-agent/internal/memory` | not-started | Phase 5 target |
-| `src/persistent_memory.rs` | `go-agent/internal/memory/persist` | not-started | Phase 5 target |
-| `src/state.rs` | `go-agent/internal/state` | not-started | Phase 5 target |
+| `src/telegram_bridge.rs` | `go-agent/internal/channels/telegram` | in-progress | Telegram channel driver scaffold with send/logout/status and alias mapping |
+| `src/channels/mod.rs` | `go-agent/internal/channels` | in-progress | Channel registry abstraction + `channels.status` and `channels.logout` wiring |
+| `src/memory.rs` | `go-agent/internal/memory` | in-progress | Message history store + chat/session history query surface |
+| `src/persistent_memory.rs` | `go-agent/internal/memory/persist` | in-progress | JSON persistence path support for memory store (`runtime.state_path`) |
+| `src/state.rs` | `go-agent/internal/state` | in-progress | Session state tracker (last channel/method/message counters) |
 | `src/session_key.rs` | `go-agent/internal/session` | not-started | Phase 5 target |
 | `src/security/*` | `go-agent/internal/security/*` | not-started | Phase 6 target |
 | `src/security_audit.rs` | `go-agent/internal/security/audit` | not-started | Phase 6 target |
@@ -30,6 +30,6 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 ## Current Gap Summary
 
 - Completed: `1`
-- In-progress: `9`
-- Not-started: `12`
+- In-progress: `14`
+- Not-started: `7`
 - Deferred: `0`

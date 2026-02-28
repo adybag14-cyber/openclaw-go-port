@@ -44,9 +44,9 @@
 
 ## Phase 5: Channels and Memory
 
-- [ ] Port channel abstraction and telegram bridge
-- [ ] Port memory and persistent state surfaces
-- [ ] Validate channel + memory integration
+- [x] Port channel abstraction and telegram bridge
+- [x] Port memory and persistent state surfaces
+- [x] Validate channel + memory integration
 
 ## Phase 6: Security and Policies
 

@@ -13,11 +13,13 @@ const (
 	defaultGatewayBind = "127.0.0.1:8765"
 	defaultHTTPBind    = "127.0.0.1:8766"
 	defaultAuthMode    = "auto"
+	defaultStatePath   = "memory://openclaw-go-state"
 )
 
 type Config struct {
-	Gateway GatewayConfig `toml:"gateway"`
-	Runtime RuntimeConfig `toml:"runtime"`
+	Gateway  GatewayConfig  `toml:"gateway"`
+	Runtime  RuntimeConfig  `toml:"runtime"`
+	Channels ChannelsConfig `toml:"channels"`
 }
 
 type GatewayConfig struct {
@@ -34,7 +36,17 @@ type GatewayServerConfig struct {
 }
 
 type RuntimeConfig struct {
-	AuditOnly bool `toml:"audit_only"`
+	AuditOnly bool   `toml:"audit_only"`
+	StatePath string `toml:"state_path"`
+}
+
+type ChannelsConfig struct {
+	Telegram TelegramChannelConfig `toml:"telegram"`
+}
+
+type TelegramChannelConfig struct {
+	BotToken      string `toml:"bot_token"`
+	DefaultTarget string `toml:"default_target"`
 }
 
 func Default() Config {
@@ -49,6 +61,13 @@ func Default() Config {
 		},
 		Runtime: RuntimeConfig{
 			AuditOnly: false,
+			StatePath: defaultStatePath,
+		},
+		Channels: ChannelsConfig{
+			Telegram: TelegramChannelConfig{
+				BotToken:      "",
+				DefaultTarget: "",
+			},
 		},
 	}
 }
@@ -84,6 +103,9 @@ func applyEnvOverrides(cfg *Config) {
 	setIfPresent("OPENCLAW_GO_WS_BIND", &cfg.Gateway.Server.Bind)
 	setIfPresent("OPENCLAW_GO_HTTP_BIND", &cfg.Gateway.Server.HTTPBind)
 	setIfPresent("OPENCLAW_GO_GATEWAY_AUTH_MODE", &cfg.Gateway.Server.AuthMode)
+	setIfPresent("OPENCLAW_GO_STATE_PATH", &cfg.Runtime.StatePath)
+	setIfPresent("OPENCLAW_GO_TELEGRAM_BOT_TOKEN", &cfg.Channels.Telegram.BotToken)
+	setIfPresent("OPENCLAW_GO_TELEGRAM_DEFAULT_TARGET", &cfg.Channels.Telegram.DefaultTarget)
 }
 
 func setIfPresent(env string, dest *string) {
@@ -107,6 +129,9 @@ func validate(cfg Config) error {
 	}
 	if strings.TrimSpace(cfg.Gateway.Server.AuthMode) == "" {
 		return errors.New("gateway.server.auth_mode cannot be empty")
+	}
+	if strings.TrimSpace(cfg.Runtime.StatePath) == "" {
+		return errors.New("runtime.state_path cannot be empty")
 	}
 	return nil
 }

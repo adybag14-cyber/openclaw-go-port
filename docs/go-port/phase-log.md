@@ -87,3 +87,28 @@
   - `go mod tidy`
   - `go test ./...`
   - `go vet ./...`
+
+### Phase 5 Channels + Memory/State Delivered
+
+- Added channel abstraction and telegram bridge scaffold:
+  - `internal/channels` registry with channel alias normalization and driver resolution.
+  - built-in `webchat` and `cli` drivers.
+  - telegram driver scaffold with token/default-target config wiring.
+  - gateway routes: `channels.status`, `channels.logout`.
+- Added memory + state surfaces:
+  - `internal/memory` message history store with optional JSON persistence via `runtime.state_path`.
+  - `chat.history` and `sessions.history` RPC routes.
+  - `internal/state` session state tracker (last channel, last method, counters).
+- Extended gateway runtime execution:
+  - `send/chat.send/sessions.send` now route through channel registry.
+  - outbound message events are recorded to memory/state.
+  - session channel defaults are reused for sends when channel is omitted.
+- Added tests:
+  - channels package tests.
+  - memory and state store tests.
+  - end-to-end gateway flow for connect + send + wait + session/chat history + channel logout.
+- Validation commands passed via Docker:
+  - `gofmt -w ./cmd ./internal`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go vet ./...`

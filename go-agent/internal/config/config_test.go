@@ -20,6 +20,9 @@ func TestLoadDefaultsWhenConfigMissing(t *testing.T) {
 	if cfg.Gateway.Server.HTTPBind != defaultHTTPBind {
 		t.Fatalf("unexpected default http bind: %s", cfg.Gateway.Server.HTTPBind)
 	}
+	if cfg.Runtime.StatePath != defaultStatePath {
+		t.Fatalf("unexpected default runtime.state_path: %s", cfg.Runtime.StatePath)
+	}
 }
 
 func TestLoadTomlAndEnvOverride(t *testing.T) {
@@ -36,12 +39,15 @@ auth_mode = "token"
 
 [runtime]
 audit_only = true
+state_path = "tmp/openclaw-go-state.json"
 `
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("failed writing test config: %v", err)
 	}
 
 	t.Setenv("OPENCLAW_GO_HTTP_BIND", "127.0.0.1:7654")
+	t.Setenv("OPENCLAW_GO_STATE_PATH", "tmp/override-state.json")
+	t.Setenv("OPENCLAW_GO_TELEGRAM_BOT_TOKEN", "tg-token")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -59,5 +65,11 @@ audit_only = true
 	}
 	if !cfg.Runtime.AuditOnly {
 		t.Fatalf("runtime.audit_only expected true")
+	}
+	if cfg.Runtime.StatePath != "tmp/override-state.json" {
+		t.Fatalf("runtime.state_path override not applied: %s", cfg.Runtime.StatePath)
+	}
+	if cfg.Channels.Telegram.BotToken != "tg-token" {
+		t.Fatalf("telegram token env override not applied")
 	}
 }

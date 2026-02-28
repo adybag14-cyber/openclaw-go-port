@@ -46,6 +46,7 @@ func TestConnectAuthAndSessionLifecycle(t *testing.T) {
 	cfg := config.Default()
 	cfg.Gateway.Server.AuthMode = "token"
 	cfg.Gateway.Token = "top-secret-token"
+	cfg.Runtime.StatePath = "memory://test-connect"
 
 	s := New(cfg, buildinfo.Default())
 	defer s.Close()
@@ -114,7 +115,9 @@ func TestConnectAuthAndSessionLifecycle(t *testing.T) {
 }
 
 func TestWebLoginAndBrowserBridgeFlow(t *testing.T) {
-	s := New(config.Default(), buildinfo.Default())
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-browser"
+	s := New(cfg, buildinfo.Default())
 	defer s.Close()
 
 	ts := httptest.NewServer(s.Handler())
@@ -222,6 +225,115 @@ func TestWebLoginAndBrowserBridgeFlow(t *testing.T) {
 	outputWrap, _ := result["output"].(map[string]any)
 	if outputWrap["status"] != float64(200) {
 		t.Fatalf("expected browser runtime output status 200, got %v", outputWrap["status"])
+	}
+}
+
+func TestChannelsSendAndHistoryFlow(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-channels"
+	cfg.Channels.Telegram.BotToken = "telegram-bot-token"
+	cfg.Channels.Telegram.DefaultTarget = "chat-1"
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	connect := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "connect-msg",
+		"method": "connect",
+		"params": map[string]any{
+			"role":    "client",
+			"channel": "telegram",
+		},
+	})
+	connectResult := assertRPCResult(t, connect)
+	sessionID, _ := connectResult["sessionId"].(string)
+	if sessionID == "" {
+		t.Fatalf("expected session id from connect")
+	}
+
+	chStatus := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "channels-status",
+		"method": "channels.status",
+		"params": map[string]any{},
+	})
+	chStatusResult := assertRPCResult(t, chStatus)
+	if count, _ := chStatusResult["count"].(float64); int(count) < 1 {
+		t.Fatalf("expected at least one channel in status")
+	}
+
+	sendResp := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "send-1",
+		"method": "send",
+		"params": map[string]any{
+			"sessionId": sessionID,
+			"message":   "hello telegram",
+		},
+	})
+	sendResult := assertRPCResult(t, sendResp)
+	jobID, _ := sendResult["jobId"].(string)
+	if jobID == "" {
+		t.Fatalf("expected job id for send")
+	}
+
+	waitResp := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "wait-send",
+		"method": "agent.wait",
+		"params": map[string]any{
+			"jobId":     jobID,
+			"timeoutMs": 2000,
+		},
+	})
+	waitResult := assertRPCResult(t, waitResp)
+	done, _ := waitResult["done"].(bool)
+	if !done {
+		t.Fatalf("expected send job completion")
+	}
+
+	sessionHistory := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "sessions-history",
+		"method": "sessions.history",
+		"params": map[string]any{
+			"sessionId": sessionID,
+		},
+	})
+	sessionHistoryResult := assertRPCResult(t, sessionHistory)
+	if count, _ := sessionHistoryResult["count"].(float64); int(count) < 1 {
+		t.Fatalf("expected session history entries")
+	}
+
+	chatHistory := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "chat-history",
+		"method": "chat.history",
+		"params": map[string]any{
+			"channel": "telegram",
+		},
+	})
+	chatHistoryResult := assertRPCResult(t, chatHistory)
+	if count, _ := chatHistoryResult["count"].(float64); int(count) < 1 {
+		t.Fatalf("expected chat history entries")
+	}
+
+	logoutResp := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "channels-logout",
+		"method": "channels.logout",
+		"params": map[string]any{
+			"channel": "telegram",
+		},
+	})
+	logoutResult := assertRPCResult(t, logoutResp)
+	ok, _ := logoutResult["ok"].(bool)
+	if !ok {
+		t.Fatalf("expected channels.logout ok=true")
 	}
 }
 
