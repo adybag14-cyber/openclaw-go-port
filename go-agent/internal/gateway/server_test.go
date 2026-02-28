@@ -960,6 +960,80 @@ func TestEdgePhase7MethodMatrix(t *testing.T) {
 	}
 }
 
+func TestEdgeStatefulContracts(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-edge-stateful"
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	run := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-finetune-stateful-run",
+		"method": "edge.finetune.run",
+		"params": map[string]any{
+			"dataset": "memory://set-a",
+		},
+	})
+	runResult := assertRPCResult(t, run)
+	job, _ := runResult["job"].(map[string]any)
+	if job["status"] != "completed" {
+		t.Fatalf("expected stateful finetune job completed, got %v", job["status"])
+	}
+
+	status := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-finetune-stateful-status",
+		"method": "edge.finetune.status",
+		"params": map[string]any{},
+	})
+	statusResult := assertRPCResult(t, status)
+	jobs, ok := statusResult["jobs"].([]any)
+	if !ok || len(jobs) < 1 {
+		t.Fatalf("expected at least one finetune job in status")
+	}
+
+	prove := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-enclave-prove-stateful",
+		"method": "edge.enclave.prove",
+		"params": map[string]any{
+			"challenge": "challenge-stateful",
+		},
+	})
+	proveResult := assertRPCResult(t, prove)
+	proof, _ := proveResult["proof"].(string)
+	if proof == "" || proof == "enclave-proof-placeholder" {
+		t.Fatalf("expected non-placeholder enclave proof, got %v", proveResult["proof"])
+	}
+
+	enclaveStatus := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-enclave-status-stateful",
+		"method": "edge.enclave.status",
+		"params": map[string]any{},
+	})
+	enclaveStatusResult := assertRPCResult(t, enclaveStatus)
+	if enclaveStatusResult["lastChallenge"] != "challenge-stateful" {
+		t.Fatalf("expected enclave status to retain last challenge, got %v", enclaveStatusResult["lastChallenge"])
+	}
+
+	homoMean := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-homomorphic-mean",
+		"method": "edge.homomorphic.compute",
+		"params": map[string]any{
+			"operation": "mean",
+			"values":    []any{2, 4, 6},
+		},
+	})
+	homoMeanResult := assertRPCResult(t, homoMean)
+	if homoMeanResult["result"] != float64(4) {
+		t.Fatalf("expected mean result 4, got %v", homoMeanResult["result"])
+	}
+}
+
 func TestAllSupportedMethodsDispatchWithoutNotImplemented(t *testing.T) {
 	cfg := config.Default()
 	cfg.Runtime.StatePath = "memory://test-supported-dispatch"

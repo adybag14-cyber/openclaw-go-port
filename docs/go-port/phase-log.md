@@ -296,3 +296,24 @@
   - `gofmt -w ./cmd ./internal`
   - `go test ./...`
   - `go vet ./...`
+
+### v2.0 Program Phase 7 Slice: Edge Handler Statefulness + Contract Depth
+
+- Replaced static edge placeholders with stateful behavior:
+  - added internal edge-state tracker for finetune jobs and enclave proof history.
+  - `edge.finetune.run` now records stateful job entries with runtime payload references.
+  - `edge.finetune.status` returns tracked jobs instead of fixed static placeholders.
+  - `edge.enclave.prove` now generates deterministic hashed proof artifacts (non-placeholder).
+  - `edge.enclave.status` now reports proof count + last challenge/proof time.
+- Expanded compute contract:
+  - `edge.homomorphic.compute` now supports `sum|mean|max|min`.
+- Expanded collaboration contract:
+  - `edge.collaboration.plan` now includes `goal` and checkpoint objects for deterministic planning state.
+- Added edge integration test coverage (`TestEdgeStatefulContracts`) validating:
+  - finetune run/status state propagation,
+  - non-placeholder enclave proof issuance and status retention,
+  - homomorphic `mean` operation correctness.
+- Validation completed (Dockerized Go toolchain):
+  - `gofmt -w ./cmd ./internal`
+  - `go test ./...`
+  - `go vet ./...`

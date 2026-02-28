@@ -45,6 +45,7 @@ type Server struct {
 	routines  *routines.Manager
 	wasm      *wasmruntime.Runtime
 	webLogin  *webbridge.Manager
+	edge      *edgeState
 }
 
 func New(cfg config.Config, build buildinfo.Info) *Server {
@@ -88,6 +89,7 @@ func New(cfg config.Config, build buildinfo.Info) *Server {
 		routines: routines.NewManager(),
 		wasm:     wasmruntime.NewRuntime(),
 		webLogin: webbridge.NewManager(10 * time.Minute),
+		edge:     newEdgeState(),
 	}
 
 	s.scheduler = scheduler.New(2, 128, s.executeScheduledJob)
@@ -750,20 +752,12 @@ func (s *Server) handleEdgeMultimodalInspect(params map[string]any) map[string]a
 }
 
 func (s *Server) handleEdgeEnclaveStatus() map[string]any {
-	return map[string]any{
-		"enabled":     true,
-		"attestation": "ready",
-		"lastProofAt": time.Now().UTC().Format(time.RFC3339),
-	}
+	return s.edge.enclaveStatus()
 }
 
 func (s *Server) handleEdgeEnclaveProve(params map[string]any) map[string]any {
 	challenge := toString(params["challenge"], "default-challenge")
-	return map[string]any{
-		"challenge": challenge,
-		"proof":     "enclave-proof-placeholder",
-		"issuedAt":  time.Now().UTC().Format(time.RFC3339),
-	}
+	return s.edge.issueEnclaveProof(challenge)
 }
 
 func (s *Server) handleEdgeMeshStatus() map[string]any {
@@ -775,37 +769,61 @@ func (s *Server) handleEdgeMeshStatus() map[string]any {
 }
 
 func (s *Server) handleEdgeHomomorphicCompute(params map[string]any) map[string]any {
-	op := toString(params["operation"], "sum")
+	op := strings.ToLower(toString(params["operation"], "sum"))
 	values := asSlice(params["values"])
 	total := 0.0
+	maxValue := 0.0
+	minValue := 0.0
 	for _, value := range values {
 		total += value
+		if value > maxValue || maxValue == 0 {
+			maxValue = value
+		}
+		if value < minValue || minValue == 0 {
+			minValue = value
+		}
+	}
+	result := total
+	switch op {
+	case "mean", "avg", "average":
+		if len(values) > 0 {
+			result = total / float64(len(values))
+		}
+	case "max":
+		result = maxValue
+	case "min":
+		result = minValue
+	case "sum":
+		// default, no-op
+	default:
+		op = "sum"
 	}
 	return map[string]any{
 		"operation": op,
-		"result":    total,
+		"result":    result,
 		"count":     len(values),
 	}
 }
 
 func (s *Server) handleEdgeFinetuneStatus() map[string]any {
 	return map[string]any{
-		"jobs": []map[string]any{
-			{"id": "ft-001", "status": "idle"},
-		},
+		"jobs": s.edge.listFinetuneJobs(25),
 	}
 }
 
 func (s *Server) handleEdgeFinetuneRun(ctx context.Context, params map[string]any) (map[string]any, *dispatchError) {
 	result, err := s.routines.Run(ctx, "edge-wasm-smoke", params)
 	if err != nil {
+		job := s.edge.addFinetuneJob(params, "failed")
 		return nil, &dispatchError{
 			Code:    -32060,
-			Message: err.Error(),
+			Message: fmt.Sprintf("%s (job=%s)", err.Error(), toString(job["id"], "")),
 		}
 	}
+	job := s.edge.addFinetuneJob(params, "completed")
+	job["runtime"] = result
 	return map[string]any{
-		"job": result,
+		"job": job,
 	}, nil
 }
 
@@ -882,12 +900,19 @@ func (s *Server) handleEdgeQuantumStatus() map[string]any {
 
 func (s *Server) handleEdgeCollaborationPlan(params map[string]any) map[string]any {
 	team := toString(params["team"], "default")
+	goal := toString(params["goal"], "delivery")
 	return map[string]any{
 		"team": team,
+		"goal": goal,
 		"plan": []string{
 			"assign-lead",
 			"define-slices",
 			"merge-validation",
+		},
+		"checkpoints": []map[string]any{
+			{"name": "spec-freeze", "owner": team, "status": "pending"},
+			{"name": "integration-pass", "owner": "qa", "status": "pending"},
+			{"name": "release-readiness", "owner": "ops", "status": "pending"},
 		},
 	}
 }
