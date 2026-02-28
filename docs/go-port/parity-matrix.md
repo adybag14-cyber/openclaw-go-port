@@ -8,7 +8,7 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 | `src/config.rs` | `go-agent/internal/config` | done | TOML + env loading, runtime profile validation, and security defaults are complete |
 | `src/gateway_server.rs` | `go-agent/internal/gateway` | done | HTTP health/RPC server, auth/connect/session lifecycle, scheduler routing, and edge handlers shipped |
 | `src/protocol.rs` | `go-agent/internal/protocol` | done | Framing, method-family classification, rpc request/response/error helpers, fixture corpus tests |
-| `src/gateway.rs` | `go-agent/internal/rpc` + `internal/gateway` | done | Canonical method registry and gateway dispatch parity surface delivered (`security.audit` included) |
+| `src/gateway.rs` | `go-agent/internal/rpc` + `internal/gateway` | done | Canonical method registry and gateway dispatch parity surface delivered (`133/133` method match with Rust); `security.audit` remains callable but intentionally non-advertised |
 | `src/scheduler.rs` | `go-agent/internal/scheduler` | done | Queue/worker execution + `agent.wait` status contracts and scheduler metrics delivered |
 | `src/runtime.rs` | `go-agent/internal/runtime` | done | Runtime snapshot/profile model implemented (`core`/`edge`, `audit-only` vs enforcing mode) |
 | `src/tool_registry.rs` | `go-agent/internal/tools` | done | Tool catalog and runtime provider registry flow delivered |

@@ -5,6 +5,30 @@
 ### Highlights
 - No unreleased changes.
 
+## v1.0.1-go - 2026-02-28
+
+### Highlights
+- Completed strict Rust parity alignment for the Go RPC method contract:
+  - Rust supported methods: `133`
+  - Go supported methods: `133`
+  - Missing in Go: `0`
+  - Extra in Go: `0`
+- Kept full dispatch coverage gate for every advertised Go method so known methods no longer fall through to `-32601`.
+- Added gateway compatibility handler coverage for legacy/extended RPC families used by Rust parity surfaces.
+- Kept `security.audit` runtime support as a non-advertised diagnostic method to avoid widening the parity contract surface.
+
+### Validation
+- Dockerized Go matrix:
+  - `gofmt -w ./internal/rpc/registry.go ./internal/gateway/server_test.go`
+  - `go test ./...`
+  - `go vet ./...`
+  - `go test ./internal/gateway -run TestAllSupportedMethodsDispatchWithoutNotImplemented -v`
+- Method-surface parity diff:
+  - Rust count `133`, Go count `133`, missing `0`, extra `0`.
+- Cross-platform release build:
+  - `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ...`
+  - `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ...`
+
 ## v1.0.0-go - 2026-02-28
 
 ### Highlights

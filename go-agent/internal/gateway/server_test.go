@@ -772,8 +772,8 @@ func TestAllSupportedMethodsDispatchWithoutNotImplemented(t *testing.T) {
 	}
 
 	methods := s.methods.SupportedMethods()
-	if len(methods) != 134 {
-		t.Fatalf("supported method count changed: got=%d want=134", len(methods))
+	if len(methods) != 133 {
+		t.Fatalf("supported method count changed: got=%d want=133", len(methods))
 	}
 	for idx, method := range methods {
 		resolved := s.methods.Resolve(method)

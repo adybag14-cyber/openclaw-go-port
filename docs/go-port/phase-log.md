@@ -193,3 +193,10 @@
   - Built artifacts:
     - `openclaw-go-windows-amd64.exe`
     - `openclaw-go-linux-amd64`
+
+### Post-v1.0.0 Parity Alignment + v1.0.1-go
+
+- Closed method-contract parity delta against `openclaw-rust` by aligning advertised Go RPC surface to exact Rust method count (`133/133`).
+- Removed only the non-parity advertised extra (`security.audit`) from Go method registry while keeping runtime handler availability for diagnostics.
+- Added hard dispatch parity gate in gateway tests ensuring all advertised methods resolve without `-32601`.
+- Revalidated Dockerized Go matrix (`gofmt`, `go test ./...`, `go vet ./...`) and method-surface diff (`missing=0`, `extra=0`).
