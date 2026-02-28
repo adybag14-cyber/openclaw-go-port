@@ -389,3 +389,23 @@
   - `gofmt -w ./cmd ./internal`
   - `go test ./...`
   - `go vet ./...`
+
+### Post-v2 Continuation (Issue #3) - Slice 2: Security Policy Expressiveness
+
+- Extended Go guard policy matching with group selectors (`group:*`) to align closer to Rust-style policy ergonomics.
+- Added supported groups:
+  - `group:edge`
+  - `group:browser`
+  - `group:messaging`
+  - `group:sessions`
+  - `group:system`
+  - `group:nodes`
+- Preserved deterministic precedence:
+  - exact method policy entries still override group-expanded wildcard policies.
+- Added security regression tests:
+  - `TestToolPolicyGroupBlock`
+  - `TestToolPolicySpecificOverrideGroup`
+- Validation completed (Dockerized Go toolchain):
+  - `gofmt -w ./cmd ./internal`
+  - `go test ./...`
+  - `go vet ./...`

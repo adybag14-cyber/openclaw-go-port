@@ -75,6 +75,38 @@ type policyBundle struct {
 	RiskBlockThreshold      *int              `json:"risk_block_threshold"`
 }
 
+var toolPolicyGroups = map[string][]string{
+	"group:edge": {
+		"edge.*",
+	},
+	"group:browser": {
+		"browser.*",
+		"web.login.*",
+		"auth.oauth.*",
+	},
+	"group:messaging": {
+		"send",
+		"chat.send",
+		"sessions.send",
+		"poll",
+	},
+	"group:sessions": {
+		"sessions.*",
+		"session.status",
+	},
+	"group:system": {
+		"connect",
+		"status",
+		"health",
+		"config.*",
+		"security.audit",
+	},
+	"group:nodes": {
+		"node.*",
+		"canvas.present",
+	},
+}
+
 func NewGuard(cfg GuardConfig) *Guard {
 	g := &Guard{
 		defaultAction:    parseAction(cfg.DefaultAction),
@@ -422,11 +454,24 @@ func (g *Guard) addToolPolicy(pattern string, action Action) {
 	if normalized == "" || action == "" {
 		return
 	}
+	if strings.HasPrefix(normalized, "group:") {
+		for _, expanded := range expandToolPolicyGroup(normalized) {
+			g.addToolPolicy(expanded, action)
+		}
+		return
+	}
 	if strings.Contains(normalized, "*") {
 		g.toolMatchers = append(g.toolMatchers, toolPolicyMatcher{pattern: normalized, action: action})
 		return
 	}
 	g.toolPolicies[normalized] = action
+}
+
+func expandToolPolicyGroup(group string) []string {
+	if patterns, ok := toolPolicyGroups[group]; ok {
+		return append([]string(nil), patterns...)
+	}
+	return []string{}
 }
 
 func (g *Guard) policyActionFor(method string) (Action, bool) {

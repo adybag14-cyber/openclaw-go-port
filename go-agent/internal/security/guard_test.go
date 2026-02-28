@@ -152,3 +152,34 @@ func TestLoopGuardBlocksRapidRepeats(t *testing.T) {
 		t.Fatalf("expected loop guard to block after rapid repeats, got %s", decision.Action)
 	}
 }
+
+func TestToolPolicyGroupBlock(t *testing.T) {
+	guard := NewGuard(GuardConfig{
+		DefaultAction: "allow",
+		ToolPolicies: map[string]string{
+			"group:edge": "block",
+		},
+	})
+	decision := guard.Evaluate("edge.swarm.plan", map[string]any{
+		"goal": "validate release readiness",
+	})
+	if decision.Action != ActionBlock {
+		t.Fatalf("expected group:edge policy to block edge method, got %s", decision.Action)
+	}
+}
+
+func TestToolPolicySpecificOverrideGroup(t *testing.T) {
+	guard := NewGuard(GuardConfig{
+		DefaultAction: "allow",
+		ToolPolicies: map[string]string{
+			"group:edge":      "block",
+			"edge.swarm.plan": "review",
+		},
+	})
+	decision := guard.Evaluate("edge.swarm.plan", map[string]any{
+		"goal": "safety rollout",
+	})
+	if decision.Action != ActionReview {
+		t.Fatalf("expected exact method policy to override group wildcard, got %s", decision.Action)
+	}
+}
