@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/config"
@@ -128,6 +129,100 @@ func TestRunParityCheckIDCorpus(t *testing.T) {
 		if !slices.Contains(got, expected) {
 			t.Fatalf("expected parity check id %s in report ids=%v", expected, got)
 		}
+	}
+}
+
+func TestRunFixAppliesRemediationsAndPersistsConfig(t *testing.T) {
+	cfg := config.Default()
+	cfg.Gateway.Server.AuthMode = "none"
+	cfg.Gateway.Server.Bind = "0.0.0.0:8765"
+	cfg.Gateway.Server.HTTPBind = "0.0.0.0:8766"
+	cfg.Runtime.StatePath = "memory://state"
+	cfg.Runtime.BrowserBridge.Endpoint = "http://0.0.0.0:43010"
+	cfg.Security.LoopGuardEnabled = false
+	cfg.Security.LoopGuardWindowMS = 0
+	cfg.Security.LoopGuardMaxHits = 0
+	cfg.Security.RiskReviewThreshold = 20
+	cfg.Security.RiskBlockThreshold = 30
+	cfg.Security.BlockedMessagePatterns = []string{}
+	cfg.Security.CredentialSensitiveKeys = []string{}
+	cfg.Security.PolicyBundlePath = "memory://policy"
+
+	configPath := filepath.Join(t.TempDir(), "openclaw-go.toml")
+	report := Run(cfg, Options{
+		Fix:        true,
+		ConfigPath: configPath,
+	})
+	if report.Fix == nil {
+		t.Fatalf("expected fix report")
+	}
+	if !report.Fix.OK {
+		t.Fatalf("expected fix report ok, errors=%v", report.Fix.Errors)
+	}
+	if len(report.Fix.Changes) == 0 {
+		t.Fatalf("expected fix to apply changes")
+	}
+	if hasFinding(report, "gateway.auth.none") {
+		t.Fatalf("expected auth.none finding to be remediated")
+	}
+	if hasFinding(report, "security.credential_keys.empty") {
+		t.Fatalf("expected credential keys finding to be remediated")
+	}
+
+	loaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("expected remediated config to load: %v", err)
+	}
+	if loaded.Gateway.Server.AuthMode != "auto" {
+		t.Fatalf("expected auth mode auto, got %s", loaded.Gateway.Server.AuthMode)
+	}
+	if strings.HasPrefix(strings.ToLower(loaded.Runtime.StatePath), "memory://") {
+		t.Fatalf("expected persisted runtime state path, got %s", loaded.Runtime.StatePath)
+	}
+	if !loaded.Security.LoopGuardEnabled {
+		t.Fatalf("expected loop guard to be enabled after remediation")
+	}
+	if len(loaded.Security.BlockedMessagePatterns) == 0 {
+		t.Fatalf("expected blocked patterns restored after remediation")
+	}
+	if len(loaded.Security.CredentialSensitiveKeys) == 0 {
+		t.Fatalf("expected credential keys restored after remediation")
+	}
+	if strings.TrimSpace(loaded.Security.PolicyBundlePath) == "" {
+		t.Fatalf("expected policy bundle path to be set")
+	}
+	if _, err := os.Stat(loaded.Security.PolicyBundlePath); err != nil {
+		t.Fatalf("expected policy bundle file to exist: %v", err)
+	}
+}
+
+func TestRunFixIsIdempotentAfterRemediation(t *testing.T) {
+	cfg := config.Default()
+	cfg.Gateway.Server.AuthMode = "none"
+	cfg.Security.PolicyBundlePath = "memory://policy"
+
+	configPath := filepath.Join(t.TempDir(), "openclaw-go.toml")
+	first := Run(cfg, Options{
+		Fix:        true,
+		ConfigPath: configPath,
+	})
+	if first.Fix == nil || !first.Fix.OK {
+		t.Fatalf("expected first fix run to succeed")
+	}
+
+	loaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("failed to load remediated config: %v", err)
+	}
+	second := Run(loaded, Options{
+		Fix:        true,
+		ConfigPath: configPath,
+	})
+	if second.Fix == nil || !second.Fix.OK {
+		t.Fatalf("expected second fix run to succeed")
+	}
+	if len(second.Fix.Changes) != 0 {
+		t.Fatalf("expected second fix run to be idempotent, got changes=%v", second.Fix.Changes)
 	}
 }
 

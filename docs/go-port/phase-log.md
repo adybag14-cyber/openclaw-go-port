@@ -474,3 +474,39 @@
   - `gofmt -w ./cmd ./internal`
   - `go test ./...`
   - `go vet ./...`
+
+### Post-v2 Continuation (Issue #4) - Slice 1: Security Audit Remediation (`--fix`)
+
+- Added Rust-style security audit remediation support in Go audit package:
+  - `securityaudit.Options{Fix, ConfigPath}` support.
+  - `report.fix` payload with deterministic action/change/error model.
+- Implemented safe config remediation flow for `--security-audit --fix`:
+  - auth posture:
+    - `gateway.server.auth_mode` from `none` -> `auto`.
+  - bind posture:
+    - reset non-loopback `gateway.server.bind` / `gateway.server.http_bind` to loopback defaults.
+  - runtime posture:
+    - convert `runtime.state_path` from `memory://...` to persisted state file path.
+    - normalize non-loopback browser bridge endpoint to default loopback endpoint.
+  - security posture:
+    - enable loop guard and restore positive thresholds.
+    - restore default blocked message patterns when empty.
+    - restore default credential-sensitive keys when empty.
+    - normalize permissive risk thresholds to defaults.
+  - policy bundle posture:
+    - set persisted `security.policy_bundle_path` when unset/in-memory.
+    - auto-create baseline JSON bundle when missing.
+  - persistence:
+    - writes remediated TOML config to `--config` target.
+    - includes write/chmod action outcomes in fix report.
+- Integration wiring:
+  - Added CLI flag `--fix` and constrained it to `--security-audit` mode.
+  - `app` diagnostics now emits fix report in `securityAudit.fix` when enabled.
+- Added regression coverage:
+  - remediation persistence test
+  - idempotent second fix-run test
+  - app-level security-audit fix JSON contract test
+- Validation completed (Dockerized Go toolchain):
+  - `gofmt -w ./cmd ./internal`
+  - `go test ./...`
+  - `go vet ./...`

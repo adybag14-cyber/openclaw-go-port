@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/config"
+	"github.com/pelletier/go-toml/v2"
 )
 
 type Severity string
@@ -64,28 +65,55 @@ type DeepReport struct {
 	PolicyBundle  DeepPolicyBundle  `json:"policyBundle"`
 }
 
+type FixAction struct {
+	Kind    string `json:"kind"`
+	Target  string `json:"target"`
+	OK      bool   `json:"ok"`
+	Skipped string `json:"skipped,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+type FixResult struct {
+	OK      bool        `json:"ok"`
+	Changes []string    `json:"changes"`
+	Actions []FixAction `json:"actions"`
+	Errors  []string    `json:"errors"`
+}
+
 type Report struct {
 	TS       int64       `json:"ts"`
 	Summary  Summary     `json:"summary"`
 	Findings []Finding   `json:"findings"`
 	Deep     *DeepReport `json:"deep,omitempty"`
+	Fix      *FixResult  `json:"fix,omitempty"`
 }
 
 type Options struct {
-	Deep bool
+	Deep       bool
+	Fix        bool
+	ConfigPath string
 }
 
 func Run(cfg config.Config, options Options) Report {
-	findings := collectFindings(cfg)
+	effectiveCfg := cfg
+	var fixResult *FixResult
+	if options.Fix {
+		fixedCfg, result := applyFixes(cfg, options.ConfigPath)
+		effectiveCfg = fixedCfg
+		fixResult = result
+	}
+
+	findings := collectFindings(effectiveCfg)
 	report := Report{
 		TS:       time.Now().UTC().UnixMilli(),
 		Findings: findings,
 		Summary:  summarize(findings),
+		Fix:      fixResult,
 	}
 	if options.Deep {
-		deepGateway := probeGateway(cfg.Gateway.URL)
-		deepBridge := probeBrowserBridge(cfg.Runtime.BrowserBridge)
-		deepPolicyBundle := probePolicyBundle(cfg.Security.PolicyBundlePath)
+		deepGateway := probeGateway(effectiveCfg.Gateway.URL)
+		deepBridge := probeBrowserBridge(effectiveCfg.Runtime.BrowserBridge)
+		deepPolicyBundle := probePolicyBundle(effectiveCfg.Security.PolicyBundlePath)
 		deep := DeepReport{
 			Gateway:       deepGateway,
 			BrowserBridge: deepBridge,
@@ -293,6 +321,237 @@ func collectFindings(cfg config.Config) []Finding {
 		}
 	}
 	return findings
+}
+
+func applyFixes(cfg config.Config, configPath string) (config.Config, *FixResult) {
+	result := &FixResult{
+		OK:      true,
+		Changes: make([]string, 0, 16),
+		Actions: make([]FixAction, 0, 8),
+		Errors:  make([]string, 0, 8),
+	}
+
+	targetPath := strings.TrimSpace(configPath)
+	if targetPath == "" {
+		targetPath = "openclaw-go.toml"
+	}
+	absPath, absErr := filepath.Abs(targetPath)
+	if absErr == nil {
+		targetPath = absPath
+	}
+	baseDir := filepath.Dir(targetPath)
+	defaults := config.Default()
+	next := cfg
+
+	recordChange := func(change string) {
+		result.Changes = append(result.Changes, change)
+	}
+
+	authMode := strings.ToLower(strings.TrimSpace(next.Gateway.Server.AuthMode))
+	if authMode == "none" {
+		next.Gateway.Server.AuthMode = "auto"
+		recordChange("set gateway.server.auth_mode to auto")
+	}
+	if !isLoopbackBind(next.Gateway.Server.Bind) {
+		next.Gateway.Server.Bind = defaults.Gateway.Server.Bind
+		recordChange("set gateway.server.bind to loopback default")
+	}
+	if !isLoopbackBind(next.Gateway.Server.HTTPBind) {
+		next.Gateway.Server.HTTPBind = defaults.Gateway.Server.HTTPBind
+		recordChange("set gateway.server.http_bind to loopback default")
+	}
+
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(next.Runtime.StatePath)), "memory://") {
+		next.Runtime.StatePath = filepath.Join(baseDir, "openclaw-go-state.json")
+		recordChange("set runtime.state_path to persisted file path")
+	}
+
+	if next.Runtime.BrowserBridge.Enabled {
+		host, _, _ := parseURLHostPort(next.Runtime.BrowserBridge.Endpoint)
+		if host != "" && !isLoopbackHost(host) {
+			next.Runtime.BrowserBridge.Endpoint = defaults.Runtime.BrowserBridge.Endpoint
+			recordChange("set runtime.browser_bridge.endpoint to loopback default")
+		}
+	}
+
+	if !next.Security.LoopGuardEnabled {
+		next.Security.LoopGuardEnabled = true
+		recordChange("enabled security.loop_guard_enabled")
+	}
+	if next.Security.LoopGuardWindowMS <= 0 {
+		next.Security.LoopGuardWindowMS = defaults.Security.LoopGuardWindowMS
+		recordChange("set security.loop_guard_window_ms to default")
+	}
+	if next.Security.LoopGuardMaxHits <= 0 {
+		next.Security.LoopGuardMaxHits = defaults.Security.LoopGuardMaxHits
+		recordChange("set security.loop_guard_max_hits to default")
+	}
+
+	if len(next.Security.BlockedMessagePatterns) == 0 {
+		next.Security.BlockedMessagePatterns = append([]string(nil), defaults.Security.BlockedMessagePatterns...)
+		recordChange("restored default security.blocked_message_patterns")
+	}
+	if len(next.Security.CredentialSensitiveKeys) == 0 {
+		next.Security.CredentialSensitiveKeys = append([]string(nil), defaults.Security.CredentialSensitiveKeys...)
+		recordChange("restored default security.credential_sensitive_keys")
+	}
+
+	if next.Security.RiskReviewThreshold < 40 || next.Security.RiskReviewThreshold > 100 {
+		next.Security.RiskReviewThreshold = defaults.Security.RiskReviewThreshold
+		recordChange("set security.risk_review_threshold to default")
+	}
+	if next.Security.RiskBlockThreshold < 60 || next.Security.RiskBlockThreshold > 100 || next.Security.RiskBlockThreshold < next.Security.RiskReviewThreshold {
+		next.Security.RiskBlockThreshold = defaults.Security.RiskBlockThreshold
+		if next.Security.RiskBlockThreshold < next.Security.RiskReviewThreshold {
+			next.Security.RiskBlockThreshold = next.Security.RiskReviewThreshold
+		}
+		recordChange("set security.risk_block_threshold to default")
+	}
+
+	policyPath := strings.TrimSpace(next.Security.PolicyBundlePath)
+	if policyPath == "" || strings.HasPrefix(strings.ToLower(policyPath), "memory://") {
+		next.Security.PolicyBundlePath = filepath.Join(baseDir, "security-policy.json")
+		recordChange("set security.policy_bundle_path to persisted file path")
+	}
+
+	if mkdirErr := os.MkdirAll(baseDir, 0o755); mkdirErr != nil {
+		result.OK = false
+		result.Errors = append(result.Errors, fmt.Sprintf("failed to create config directory %s: %v", baseDir, mkdirErr))
+		result.Actions = append(result.Actions, FixAction{
+			Kind:   "mkdir",
+			Target: baseDir,
+			OK:     false,
+			Error:  mkdirErr.Error(),
+		})
+	} else {
+		result.Actions = append(result.Actions, FixAction{
+			Kind:   "mkdir",
+			Target: baseDir,
+			OK:     true,
+		})
+	}
+
+	policyAction := ensurePolicyBundleFile(next.Security.PolicyBundlePath, defaults.Security.BlockedMessagePatterns)
+	result.Actions = append(result.Actions, policyAction)
+	if !policyAction.OK && policyAction.Error != "" {
+		result.OK = false
+		result.Errors = append(result.Errors, policyAction.Error)
+	}
+	if policyAction.OK && policyAction.Kind == "write" && strings.TrimSpace(policyAction.Skipped) == "" {
+		recordChange("created security policy bundle file")
+	}
+
+	tomlBytes, marshalErr := toml.Marshal(next)
+	if marshalErr != nil {
+		result.OK = false
+		result.Errors = append(result.Errors, fmt.Sprintf("failed to serialize remediated config: %v", marshalErr))
+		result.Actions = append(result.Actions, FixAction{
+			Kind:   "write",
+			Target: targetPath,
+			OK:     false,
+			Error:  marshalErr.Error(),
+		})
+		return cfg, result
+	}
+
+	if writeErr := os.WriteFile(targetPath, tomlBytes, 0o600); writeErr != nil {
+		result.OK = false
+		result.Errors = append(result.Errors, fmt.Sprintf("failed to write remediated config: %v", writeErr))
+		result.Actions = append(result.Actions, FixAction{
+			Kind:   "write",
+			Target: targetPath,
+			OK:     false,
+			Error:  writeErr.Error(),
+		})
+		return cfg, result
+	}
+	result.Actions = append(result.Actions, FixAction{
+		Kind:   "write",
+		Target: targetPath,
+		OK:     true,
+	})
+
+	if chmodErr := os.Chmod(targetPath, 0o600); chmodErr != nil {
+		result.Actions = append(result.Actions, FixAction{
+			Kind:    "chmod",
+			Target:  targetPath,
+			OK:      false,
+			Skipped: chmodErr.Error(),
+		})
+	} else {
+		result.Actions = append(result.Actions, FixAction{
+			Kind:   "chmod",
+			Target: targetPath,
+			OK:     true,
+		})
+	}
+
+	if len(result.Errors) > 0 {
+		result.OK = false
+	}
+	return next, result
+}
+
+func ensurePolicyBundleFile(path string, blockedPatterns []string) FixAction {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" || strings.HasPrefix(strings.ToLower(trimmed), "memory://") {
+		return FixAction{
+			Kind:    "write",
+			Target:  trimmed,
+			OK:      false,
+			Skipped: "policy bundle path is unset",
+		}
+	}
+
+	if info, err := os.Stat(trimmed); err == nil && !info.IsDir() {
+		return FixAction{
+			Kind:    "write",
+			Target:  trimmed,
+			OK:      true,
+			Skipped: "policy bundle file already exists",
+		}
+	}
+
+	parent := filepath.Dir(trimmed)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return FixAction{
+			Kind:   "write",
+			Target: trimmed,
+			OK:     false,
+			Error:  err.Error(),
+		}
+	}
+
+	payload := map[string]any{
+		"version":                  1,
+		"generatedBy":              "openclaw-go-security-audit-fix",
+		"generatedAt":              time.Now().UTC().Format(time.RFC3339),
+		"default_action":           "allow",
+		"tool_policies":            map[string]any{},
+		"blocked_message_patterns": blockedPatterns,
+	}
+	raw, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return FixAction{
+			Kind:   "write",
+			Target: trimmed,
+			OK:     false,
+			Error:  err.Error(),
+		}
+	}
+	if err := os.WriteFile(trimmed, raw, 0o600); err != nil {
+		return FixAction{
+			Kind:   "write",
+			Target: trimmed,
+			OK:     false,
+			Error:  err.Error(),
+		}
+	}
+	return FixAction{
+		Kind:   "write",
+		Target: trimmed,
+		OK:     true,
+	}
 }
 
 func summarize(findings []Finding) Summary {

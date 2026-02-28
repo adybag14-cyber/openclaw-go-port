@@ -40,3 +40,4 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 - Slice 2 complete: security policy expressiveness (`group:*` tool policy matching with deterministic precedence).
 - Slice 3 complete: WASM runtime depth (`wazero` compiled execution path under policy gates).
 - Slice 4 complete: doctor/security audit depth (expanded audit checks, deep probes, parity corpus tests, and `doctor.checks` diagnostics output).
+- Slice 5 complete: security audit remediation flow (`--security-audit --fix`) with persisted config fixes, policy bundle bootstrap, idempotency tests, and action-level fix reporting.

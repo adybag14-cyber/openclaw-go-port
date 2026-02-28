@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 )
 
@@ -59,5 +60,35 @@ func TestRunListMethodsOutputsMethodCatalog(t *testing.T) {
 	}
 	if count, _ := methods["count"].(float64); int(count) < 100 {
 		t.Fatalf("expected large method catalog count, got %v", methods["count"])
+	}
+}
+
+func TestRunSecurityAuditFixOutputsFixReport(t *testing.T) {
+	var out bytes.Buffer
+	configPath := filepath.Join(t.TempDir(), "openclaw-go.toml")
+	err := Run(context.Background(), Options{
+		ConfigPath:    configPath,
+		SecurityAudit: true,
+		Fix:           true,
+		Output:        &out,
+	})
+	if err != nil {
+		t.Fatalf("security audit fix run failed: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("security-audit output should be JSON: %v", err)
+	}
+	securityAudit, ok := payload["securityAudit"].(map[string]any)
+	if !ok {
+		t.Fatalf("securityAudit payload should be object")
+	}
+	fix, ok := securityAudit["fix"].(map[string]any)
+	if !ok {
+		t.Fatalf("securityAudit payload should include fix report")
+	}
+	if okField, _ := fix["ok"].(bool); !okField {
+		t.Fatalf("securityAudit fix report expected ok=true")
 	}
 }

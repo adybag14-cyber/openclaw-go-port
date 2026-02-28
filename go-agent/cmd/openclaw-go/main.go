@@ -16,6 +16,7 @@ func main() {
 		httpBind    = flag.String("http-bind", "", "Override HTTP bind for control/health server")
 		doctor      = flag.Bool("doctor", false, "Run doctor diagnostics and exit")
 		audit       = flag.Bool("security-audit", false, "Run security audit diagnostics and exit")
+		fix         = flag.Bool("fix", false, "Apply safe remediations in security-audit mode")
 		listMethods = flag.Bool("list-methods", false, "Print supported RPC methods and exit")
 		deep        = flag.Bool("deep", false, "Enable deep probes in doctor/security-audit mode")
 	)
@@ -29,6 +30,7 @@ func main() {
 		HTTPBindOverride: *httpBind,
 		Doctor:           *doctor,
 		SecurityAudit:    *audit,
+		Fix:              *fix,
 		ListMethods:      *listMethods,
 		Deep:             *deep,
 	}); err != nil {

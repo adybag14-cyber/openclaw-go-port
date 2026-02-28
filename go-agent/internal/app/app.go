@@ -21,6 +21,7 @@ type Options struct {
 
 	Doctor        bool
 	SecurityAudit bool
+	Fix           bool
 	ListMethods   bool
 	Deep          bool
 	Output        io.Writer
@@ -74,7 +75,9 @@ func runDiagnostics(cfg config.Config, opts Options) error {
 
 	if opts.Doctor || opts.SecurityAudit {
 		report := securityaudit.Run(cfg, securityaudit.Options{
-			Deep: opts.Deep,
+			Deep:       opts.Deep,
+			Fix:        opts.Fix && opts.SecurityAudit,
+			ConfigPath: opts.ConfigPath,
 		})
 		payload["securityAudit"] = report
 		payload["doctor"] = map[string]any{
