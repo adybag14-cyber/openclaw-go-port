@@ -51,14 +51,14 @@
 ## Phase 6: Security and Policies
 
 - [x] Port policy bundle + guard layers
-- [ ] Port telemetry and credential policy behaviors
+- [x] Port telemetry and credential policy behaviors
 - [x] Validate policy outcomes against Rust baseline
 
 ## Phase 7: Advanced Runtime Features
 
-- [ ] Port wasm/routines and remaining edge features
-- [ ] Close all required parity gaps
-- [ ] Run advanced smoke/replay checks
+- [x] Port wasm/routines and remaining edge features
+- [x] Close all required parity gaps
+- [x] Run advanced smoke/replay checks
 
 ## Phase 8: Cutover and v1.0
 

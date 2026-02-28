@@ -26,6 +26,12 @@ func TestLoadDefaultsWhenConfigMissing(t *testing.T) {
 	if cfg.Security.DefaultAction != "allow" {
 		t.Fatalf("unexpected default security.default_action: %s", cfg.Security.DefaultAction)
 	}
+	if cfg.Security.TelemetryAction != "review" {
+		t.Fatalf("unexpected default security.telemetry_action: %s", cfg.Security.TelemetryAction)
+	}
+	if cfg.Security.CredentialLeakAction != "block" {
+		t.Fatalf("unexpected default security.credential_leak_action: %s", cfg.Security.CredentialLeakAction)
+	}
 }
 
 func TestLoadTomlAndEnvOverride(t *testing.T) {
@@ -46,6 +52,8 @@ state_path = "tmp/openclaw-go-state.json"
 
 [security]
 default_action = "review"
+telemetry_action = "block"
+credential_leak_action = "review"
 policy_bundle_path = "tmp/policy-bundle.json"
 `
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -85,5 +93,11 @@ policy_bundle_path = "tmp/policy-bundle.json"
 	}
 	if cfg.Security.DefaultAction != "review" {
 		t.Fatalf("security.default_action expected review")
+	}
+	if cfg.Security.TelemetryAction != "block" {
+		t.Fatalf("security.telemetry_action expected block")
+	}
+	if cfg.Security.CredentialLeakAction != "review" {
+		t.Fatalf("security.credential_leak_action expected review")
 	}
 }

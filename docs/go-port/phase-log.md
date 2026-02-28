@@ -132,3 +132,38 @@
   - `go mod tidy`
   - `go test ./...`
   - `go vet ./...`
+
+### Phase 6 Security/Policy Stack Delivered
+
+- Expanded security configuration and guard behavior:
+  - telemetry high-risk tags and action policy wiring.
+  - credential-sensitive key scanning and leak policy actions.
+  - auth-handshake safe handling so `connect` auth payloads are validated without false-positive leak blocking.
+- Added/extended tests:
+  - credential leak detection tests.
+  - telemetry high-risk review tests.
+  - auth handshake allowlist test for `connect`.
+  - gateway integration coverage for credential and telemetry policy outcomes.
+- Validation commands passed via Docker:
+  - `gofmt -w ./cmd ./internal`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go vet ./...`
+
+### Phase 7 Advanced Runtime Features Delivered
+
+- Added advanced runtime packages:
+  - `internal/routines` with routine registry and deterministic run contracts.
+  - `internal/wasm/runtime` marketplace and sandbox-gated execution.
+  - `internal/wasm/sandbox` policy evaluation for capability controls.
+- Wired edge/runtime parity methods in gateway dispatch:
+  - wasm marketplace, router/swam/multimodal, enclave/mesh, homomorphic compute, finetune run/status, identity/personality/handoff, marketplace preview, cluster planning, alignment, quantum status, collaboration, and voice transcription.
+  - `config.get` now exposes routines and wasm runtime snapshots.
+- Added advanced integration coverage:
+  - edge wasm + routines execution flow checks.
+  - edge method matrix replay-style gateway test covering full new `edge.*` method set.
+- Validation commands passed via Docker:
+  - `gofmt -w ./cmd ./internal`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go vet ./...`

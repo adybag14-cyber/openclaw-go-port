@@ -51,10 +51,14 @@ type TelegramChannelConfig struct {
 }
 
 type SecurityConfig struct {
-	PolicyBundlePath       string            `toml:"policy_bundle_path"`
-	DefaultAction          string            `toml:"default_action"`
-	ToolPolicies           map[string]string `toml:"tool_policies"`
-	BlockedMessagePatterns []string          `toml:"blocked_message_patterns"`
+	PolicyBundlePath        string            `toml:"policy_bundle_path"`
+	DefaultAction           string            `toml:"default_action"`
+	ToolPolicies            map[string]string `toml:"tool_policies"`
+	BlockedMessagePatterns  []string          `toml:"blocked_message_patterns"`
+	TelemetryHighRiskTags   []string          `toml:"telemetry_high_risk_tags"`
+	TelemetryAction         string            `toml:"telemetry_action"`
+	CredentialSensitiveKeys []string          `toml:"credential_sensitive_keys"`
+	CredentialLeakAction    string            `toml:"credential_leak_action"`
 }
 
 func Default() Config {
@@ -85,6 +89,21 @@ func Default() Config {
 				"rm -rf /",
 				"del /f /s /q",
 			},
+			TelemetryHighRiskTags: []string{
+				"edr:high-risk",
+				"behavior:ransomware",
+				"threat:critical",
+			},
+			TelemetryAction: "review",
+			CredentialSensitiveKeys: []string{
+				"apiKey",
+				"api_key",
+				"token",
+				"password",
+				"secret",
+				"authorization",
+			},
+			CredentialLeakAction: "block",
 		},
 	}
 }
@@ -153,6 +172,12 @@ func validate(cfg Config) error {
 	}
 	if strings.TrimSpace(cfg.Security.DefaultAction) == "" {
 		return errors.New("security.default_action cannot be empty")
+	}
+	if strings.TrimSpace(cfg.Security.TelemetryAction) == "" {
+		return errors.New("security.telemetry_action cannot be empty")
+	}
+	if strings.TrimSpace(cfg.Security.CredentialLeakAction) == "" {
+		return errors.New("security.credential_leak_action cannot be empty")
 	}
 	return nil
 }

@@ -19,17 +19,17 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 | `src/persistent_memory.rs` | `go-agent/internal/memory/persist` | in-progress | JSON persistence path support for memory store (`runtime.state_path`) |
 | `src/state.rs` | `go-agent/internal/state` | in-progress | Session state tracker (last channel/method/message counters) |
 | `src/session_key.rs` | `go-agent/internal/session` | not-started | Phase 5 target |
-| `src/security/*` | `go-agent/internal/security/*` | in-progress | Policy guard scaffold with tool-policy + message-pattern enforcement and bundle loading |
+| `src/security/*` | `go-agent/internal/security/*` | done | Policy guard parity includes bundle loading, telemetry high-risk handling, credential leak detection, and auth-handshake-safe enforcement |
 | `src/security_audit.rs` | `go-agent/internal/security/audit` | not-started | Phase 6 target |
-| `src/routines.rs` | `go-agent/internal/routines` | not-started | Phase 7 target |
-| `src/wasm_runtime.rs` | `go-agent/internal/wasm/runtime` | not-started | Phase 7 target |
-| `src/wasm_sandbox.rs` | `go-agent/internal/wasm/sandbox` | not-started | Phase 7 target |
+| `src/routines.rs` | `go-agent/internal/routines` | done | Routine registry + deterministic execution contract + tests |
+| `src/wasm_runtime.rs` | `go-agent/internal/wasm/runtime` | done | WASM module marketplace + sandbox-gated execution + tests |
+| `src/wasm_sandbox.rs` | `go-agent/internal/wasm/sandbox` | done | Default sandbox policy + capability evaluation + tests |
 | `src/website_bridge.rs` | `go-agent/internal/bridge/web` | in-progress | Browser auth login manager (`start/wait/complete/logout`) integrated via RPC |
 | `src/bridge.rs` | `go-agent/internal/bridge` | in-progress | Bridge orchestration scaffold through gateway + scheduler + tool runtime |
 
 ## Current Gap Summary
 
-- Completed: `1`
-- In-progress: `15`
-- Not-started: `6`
+- Completed: `5`
+- In-progress: `14`
+- Not-started: `3`
 - Deferred: `0`

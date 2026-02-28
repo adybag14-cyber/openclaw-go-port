@@ -396,6 +396,285 @@ func TestSecurityPolicyBlocksConfiguredMethods(t *testing.T) {
 	}
 }
 
+func TestSecurityCredentialAndTelemetryPolicies(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-security-2"
+	cfg.Security.DefaultAction = "allow"
+	cfg.Security.CredentialLeakAction = "block"
+	cfg.Security.TelemetryAction = "review"
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	leak := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "security-leak",
+		"method": "send",
+		"params": map[string]any{
+			"channel": "webchat",
+			"message": "test",
+			"payload": map[string]any{
+				"api_key": "sk-very-secret",
+			},
+		},
+	})
+	assertRPCErrorCode(t, leak, -32050)
+
+	reviewAllowed := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "security-review",
+		"method": "agent",
+		"params": map[string]any{
+			"message":       "normal message",
+			"telemetryTags": []string{"threat:critical"},
+		},
+	})
+	_ = assertRPCResult(t, reviewAllowed)
+}
+
+func TestEdgeWasmAndRoutinesPhase7Methods(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-edge-phase7"
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	wasmList := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-wasm-list",
+		"method": "edge.wasm.marketplace.list",
+		"params": map[string]any{},
+	})
+	wasmResult := assertRPCResult(t, wasmList)
+	if count, _ := wasmResult["count"].(float64); int(count) < 1 {
+		t.Fatalf("expected wasm marketplace entries")
+	}
+
+	finetuneRun := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-finetune-run",
+		"method": "edge.finetune.run",
+		"params": map[string]any{
+			"dataset": "memory://dataset",
+		},
+	})
+	finetuneResult := assertRPCResult(t, finetuneRun)
+	job, ok := finetuneResult["job"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected finetune run job payload")
+	}
+	if job["status"] != "completed" {
+		t.Fatalf("expected finetune job completed, got %v", job["status"])
+	}
+
+	homomorphic := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-homo",
+		"method": "edge.homomorphic.compute",
+		"params": map[string]any{
+			"operation": "sum",
+			"values":    []any{1, 2, 3},
+		},
+	})
+	homoResult := assertRPCResult(t, homomorphic)
+	if homoResult["result"] != float64(6) {
+		t.Fatalf("unexpected homomorphic compute result: %v", homoResult["result"])
+	}
+}
+
+func TestEdgePhase7MethodMatrix(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-edge-phase7-matrix"
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	checks := []struct {
+		method string
+		params map[string]any
+		assert func(t *testing.T, result map[string]any)
+	}{
+		{
+			method: "edge.router.plan",
+			params: map[string]any{"goal": "latency"},
+			assert: func(t *testing.T, result map[string]any) {
+				route, ok := result["route"].(map[string]any)
+				if !ok {
+					t.Fatalf("edge.router.plan missing route payload")
+				}
+				primary, _ := route["primary"].(string)
+				if primary == "" {
+					t.Fatalf("edge.router.plan should include primary route")
+				}
+			},
+		},
+		{
+			method: "edge.acceleration.status",
+			params: map[string]any{},
+			assert: func(t *testing.T, result map[string]any) {
+				if enabled, _ := result["enabled"].(bool); !enabled {
+					t.Fatalf("edge.acceleration.status expected enabled=true")
+				}
+			},
+		},
+		{
+			method: "edge.swarm.plan",
+			params: map[string]any{"task": "verification"},
+			assert: func(t *testing.T, result map[string]any) {
+				agents, ok := result["agents"].([]any)
+				if !ok || len(agents) < 1 {
+					t.Fatalf("edge.swarm.plan expected agents")
+				}
+			},
+		},
+		{
+			method: "edge.multimodal.inspect",
+			params: map[string]any{"source": "memory://image"},
+			assert: func(t *testing.T, result map[string]any) {
+				if summary, _ := result["summary"].(string); summary == "" {
+					t.Fatalf("edge.multimodal.inspect expected summary")
+				}
+			},
+		},
+		{
+			method: "edge.enclave.status",
+			params: map[string]any{},
+			assert: func(t *testing.T, result map[string]any) {
+				if attestation, _ := result["attestation"].(string); attestation == "" {
+					t.Fatalf("edge.enclave.status expected attestation")
+				}
+			},
+		},
+		{
+			method: "edge.enclave.prove",
+			params: map[string]any{"challenge": "abc"},
+			assert: func(t *testing.T, result map[string]any) {
+				if proof, _ := result["proof"].(string); proof == "" {
+					t.Fatalf("edge.enclave.prove expected proof")
+				}
+			},
+		},
+		{
+			method: "edge.mesh.status",
+			params: map[string]any{},
+			assert: func(t *testing.T, result map[string]any) {
+				if connected, _ := result["connected"].(bool); !connected {
+					t.Fatalf("edge.mesh.status expected connected=true")
+				}
+			},
+		},
+		{
+			method: "edge.finetune.status",
+			params: map[string]any{},
+			assert: func(t *testing.T, result map[string]any) {
+				jobs, ok := result["jobs"].([]any)
+				if !ok || len(jobs) < 1 {
+					t.Fatalf("edge.finetune.status expected jobs")
+				}
+			},
+		},
+		{
+			method: "edge.identity.trust.status",
+			params: map[string]any{},
+			assert: func(t *testing.T, result map[string]any) {
+				if status, _ := result["status"].(string); status != "trusted" {
+					t.Fatalf("edge.identity.trust.status expected trusted status, got %v", result["status"])
+				}
+			},
+		},
+		{
+			method: "edge.personality.profile",
+			params: map[string]any{"profile": "assistant"},
+			assert: func(t *testing.T, result map[string]any) {
+				traits, ok := result["traits"].([]any)
+				if !ok || len(traits) < 1 {
+					t.Fatalf("edge.personality.profile expected traits")
+				}
+			},
+		},
+		{
+			method: "edge.handoff.plan",
+			params: map[string]any{"target": "ops"},
+			assert: func(t *testing.T, result map[string]any) {
+				steps, ok := result["steps"].([]any)
+				if !ok || len(steps) < 1 {
+					t.Fatalf("edge.handoff.plan expected steps")
+				}
+			},
+		},
+		{
+			method: "edge.marketplace.revenue.preview",
+			params: map[string]any{"units": 5, "price": 2.5},
+			assert: func(t *testing.T, result map[string]any) {
+				if revenue, _ := result["revenue"].(float64); revenue != 12.5 {
+					t.Fatalf("edge.marketplace.revenue.preview expected revenue=12.5, got %v", result["revenue"])
+				}
+			},
+		},
+		{
+			method: "edge.finetune.cluster.plan",
+			params: map[string]any{"workers": 3},
+			assert: func(t *testing.T, result map[string]any) {
+				if workers, _ := result["workers"].(float64); int(workers) != 3 {
+					t.Fatalf("edge.finetune.cluster.plan expected workers=3, got %v", result["workers"])
+				}
+			},
+		},
+		{
+			method: "edge.alignment.evaluate",
+			params: map[string]any{"input": "safe request"},
+			assert: func(t *testing.T, result map[string]any) {
+				if status, _ := result["status"].(string); status != "pass" {
+					t.Fatalf("edge.alignment.evaluate expected pass status, got %v", result["status"])
+				}
+			},
+		},
+		{
+			method: "edge.quantum.status",
+			params: map[string]any{},
+			assert: func(t *testing.T, result map[string]any) {
+				if mode, _ := result["mode"].(string); mode != "simulated" {
+					t.Fatalf("edge.quantum.status expected mode=simulated, got %v", result["mode"])
+				}
+			},
+		},
+		{
+			method: "edge.collaboration.plan",
+			params: map[string]any{"team": "core"},
+			assert: func(t *testing.T, result map[string]any) {
+				plan, ok := result["plan"].([]any)
+				if !ok || len(plan) < 1 {
+					t.Fatalf("edge.collaboration.plan expected plan steps")
+				}
+			},
+		},
+		{
+			method: "edge.voice.transcribe",
+			params: map[string]any{"audioRef": "memory://clip"},
+			assert: func(t *testing.T, result map[string]any) {
+				if transcript, _ := result["transcript"].(string); transcript == "" {
+					t.Fatalf("edge.voice.transcribe expected transcript")
+				}
+			},
+		},
+	}
+
+	for _, check := range checks {
+		frame := rpcCall(t, ts.URL, map[string]any{
+			"type":   "req",
+			"id":     "edge-matrix-" + check.method,
+			"method": check.method,
+			"params": check.params,
+		})
+		result := assertRPCResult(t, frame)
+		check.assert(t, result)
+	}
+}
+
 func rpcCall(t *testing.T, baseURL string, frame map[string]any) map[string]any {
 	t.Helper()
 	body, err := json.Marshal(frame)
