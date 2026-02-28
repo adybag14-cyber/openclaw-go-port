@@ -12,8 +12,12 @@ import (
 
 func main() {
 	var (
-		configPath = flag.String("config", "openclaw-go.toml", "Path to TOML config file")
-		httpBind   = flag.String("http-bind", "", "Override HTTP bind for control/health server")
+		configPath  = flag.String("config", "openclaw-go.toml", "Path to TOML config file")
+		httpBind    = flag.String("http-bind", "", "Override HTTP bind for control/health server")
+		doctor      = flag.Bool("doctor", false, "Run doctor diagnostics and exit")
+		audit       = flag.Bool("security-audit", false, "Run security audit diagnostics and exit")
+		listMethods = flag.Bool("list-methods", false, "Print supported RPC methods and exit")
+		deep        = flag.Bool("deep", false, "Enable deep probes in doctor/security-audit mode")
 	)
 	flag.Parse()
 
@@ -23,6 +27,10 @@ func main() {
 	if err := app.Run(ctx, app.Options{
 		ConfigPath:       *configPath,
 		HTTPBindOverride: *httpBind,
+		Doctor:           *doctor,
+		SecurityAudit:    *audit,
+		ListMethods:      *listMethods,
+		Deep:             *deep,
 	}); err != nil {
 		log.Fatalf("openclaw-go bootstrap failed: %v", err)
 	}

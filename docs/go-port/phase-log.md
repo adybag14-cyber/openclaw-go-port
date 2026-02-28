@@ -317,3 +317,20 @@
   - `gofmt -w ./cmd ./internal`
   - `go test ./...`
   - `go vet ./...`
+
+### v2.0 Program Phase 8 Slice: Doctor + CLI Diagnostics Depth
+
+- Expanded CLI diagnostic surfaces in `openclaw-go`:
+  - `--doctor` (security/health diagnostics snapshot, JSON output)
+  - `--security-audit` (audit report output without starting gateway server)
+  - `--list-methods` (full RPC method catalog output)
+  - `--deep` toggle for deep audit probes.
+- Added diagnostics execution path in app layer:
+  - outputs structured JSON with service/version/config snapshot.
+  - includes security audit summary when doctor/audit mode is selected.
+  - includes sorted method catalog for list-methods mode.
+- Added app-level tests validating doctor and method-list JSON output contracts.
+- Validation completed (Dockerized Go toolchain):
+  - `gofmt -w ./cmd ./internal`
+  - `go test ./...`
+  - `go vet ./...`
