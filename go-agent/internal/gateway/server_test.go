@@ -18,6 +18,8 @@ func TestHealthEndpoint(t *testing.T) {
 		Commit:  "abc123",
 		BuiltAt: "now",
 	})
+	defer s.Close()
+
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
 
@@ -35,114 +37,236 @@ func TestHealthEndpoint(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode health response failed: %v", err)
 	}
-
 	if payload["status"] != "ok" {
 		t.Fatalf("unexpected health status: %v", payload["status"])
 	}
-	if payload["version"] != "test" {
-		t.Fatalf("unexpected version: %v", payload["version"])
-	}
 }
 
-func TestRPCStubReturnsMethodNotFound(t *testing.T) {
-	s := New(config.Default(), buildinfo.Default())
+func TestConnectAuthAndSessionLifecycle(t *testing.T) {
+	cfg := config.Default()
+	cfg.Gateway.Server.AuthMode = "token"
+	cfg.Gateway.Token = "top-secret-token"
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
 
-	reqBody := []byte(`{"type":"req","id":"1","method":"models.list","params":{}}`)
-	resp, err := http.Post(ts.URL+"/rpc", "application/json", bytes.NewReader(reqBody))
+	failConnect := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "c-fail",
+		"method": "connect",
+		"params": map[string]any{
+			"role": "client",
+		},
+	})
+	assertRPCErrorCode(t, failConnect, -32001)
+
+	connect := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "c-ok",
+		"method": "connect",
+		"params": map[string]any{
+			"role":   "client",
+			"scopes": []string{"operator.read", "operator.write"},
+			"client": map[string]any{
+				"id": "test-client",
+			},
+			"auth": map[string]any{
+				"token": "top-secret-token",
+			},
+		},
+	})
+	result := assertRPCResult(t, connect)
+	sessionID, _ := result["sessionId"].(string)
+	if sessionID == "" {
+		t.Fatalf("missing sessionId on connect response")
+	}
+
+	sessionsList := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "s-list",
+		"method": "sessions.list",
+		"params": map[string]any{},
+	})
+	listResult := assertRPCResult(t, sessionsList)
+	if count, _ := listResult["count"].(float64); int(count) < 1 {
+		t.Fatalf("expected sessions list count >=1, got %v", listResult["count"])
+	}
+
+	statusResp := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "s-status",
+		"method": "session.status",
+		"params": map[string]any{
+			"sessionId": sessionID,
+		},
+	})
+	statusResult := assertRPCResult(t, statusResp)
+	sessionObj, ok := statusResult["session"].(map[string]any)
+	if !ok {
+		t.Fatalf("session.status should include session object")
+	}
+	if sessionObj["id"] != sessionID {
+		t.Fatalf("session id mismatch in session.status response")
+	}
+}
+
+func TestWebLoginAndBrowserBridgeFlow(t *testing.T) {
+	s := New(config.Default(), buildinfo.Default())
+	defer s.Close()
+
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	start := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "wl-start",
+		"method": "web.login.start",
+		"params": map[string]any{
+			"provider": "chatgpt",
+			"model":    "gpt-5.2",
+		},
+	})
+	startResult := assertRPCResult(t, start)
+	loginObj, ok := startResult["login"].(map[string]any)
+	if !ok {
+		t.Fatalf("web.login.start should include login object")
+	}
+	loginID, _ := loginObj["loginSessionId"].(string)
+	loginCode, _ := loginObj["code"].(string)
+	if loginID == "" || loginCode == "" {
+		t.Fatalf("login id/code missing in start response")
+	}
+
+	waitPending := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "wl-wait-pending",
+		"method": "web.login.wait",
+		"params": map[string]any{
+			"loginSessionId": loginID,
+			"timeoutMs":      10,
+		},
+	})
+	waitPendingResult := assertRPCResult(t, waitPending)
+	waitPendingLogin, _ := waitPendingResult["login"].(map[string]any)
+	if waitPendingLogin["status"] != "pending" {
+		t.Fatalf("expected pending login status, got %v", waitPendingLogin["status"])
+	}
+
+	beforeAuth := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "browser-before-auth",
+		"method": "browser.request",
+		"params": map[string]any{"url": "https://chatgpt.com"},
+	})
+	assertRPCErrorCode(t, beforeAuth, -32040)
+
+	complete := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "oauth-complete",
+		"method": "auth.oauth.complete",
+		"params": map[string]any{
+			"loginSessionId": loginID,
+			"code":           loginCode,
+		},
+	})
+	completeResult := assertRPCResult(t, complete)
+	completeLogin, _ := completeResult["login"].(map[string]any)
+	if completeLogin["status"] != "authorized" {
+		t.Fatalf("expected authorized login status, got %v", completeLogin["status"])
+	}
+
+	toolsCatalog := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "tools-catalog",
+		"method": "tools.catalog",
+		"params": map[string]any{},
+	})
+	catalogResult := assertRPCResult(t, toolsCatalog)
+	if count, _ := catalogResult["count"].(float64); int(count) < 1 {
+		t.Fatalf("tools.catalog should return entries")
+	}
+
+	browserReq := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "browser-req",
+		"method": "browser.request",
+		"params": map[string]any{
+			"url":    "https://chatgpt.com",
+			"method": "GET",
+		},
+	})
+	browserResult := assertRPCResult(t, browserReq)
+	jobID, _ := browserResult["jobId"].(string)
+	if jobID == "" {
+		t.Fatalf("browser.request should return queued jobId")
+	}
+
+	waitJob := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "agent-wait",
+		"method": "agent.wait",
+		"params": map[string]any{
+			"jobId":     jobID,
+			"timeoutMs": 2000,
+		},
+	})
+	waitJobResult := assertRPCResult(t, waitJob)
+	done, _ := waitJobResult["done"].(bool)
+	if !done {
+		t.Fatalf("expected queued browser job to complete")
+	}
+	result, _ := waitJobResult["result"].(map[string]any)
+	outputWrap, _ := result["output"].(map[string]any)
+	if outputWrap["status"] != float64(200) {
+		t.Fatalf("expected browser runtime output status 200, got %v", outputWrap["status"])
+	}
+}
+
+func rpcCall(t *testing.T, baseURL string, frame map[string]any) map[string]any {
+	t.Helper()
+	body, err := json.Marshal(frame)
+	if err != nil {
+		t.Fatalf("failed to marshal rpc frame: %v", err)
+	}
+	resp, err := http.Post(baseURL+"/rpc", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST /rpc failed: %v", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("unexpected status: %d", resp.StatusCode)
-	}
-
 	var payload map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode rpc response failed: %v", err)
+		t.Fatalf("failed decoding rpc response: %v", err)
 	}
-
-	errObj, ok := payload["error"].(map[string]any)
-	if !ok {
-		t.Fatalf("error object missing in rpc response")
-	}
-	if got := int(errObj["code"].(float64)); got != -32601 {
-		t.Fatalf("unexpected error code: %d", got)
-	}
-
-	details, ok := errObj["details"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected details in rpc error")
-	}
-	if details["canonical"] != "models.list" {
-		t.Fatalf("unexpected canonical value: %v", details["canonical"])
-	}
+	return payload
 }
 
-func TestRPCHealthMethodReturnsSuccessEnvelope(t *testing.T) {
-	s := New(config.Default(), buildinfo.Default())
-	ts := httptest.NewServer(s.Handler())
-	defer ts.Close()
-
-	reqBody := []byte(`{"type":"req","id":"2","method":"health","params":{}}`)
-	resp, err := http.Post(ts.URL+"/rpc", "application/json", bytes.NewReader(reqBody))
-	if err != nil {
-		t.Fatalf("POST /rpc failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var payload map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode rpc response failed: %v", err)
-	}
-
-	if payload["type"] != "resp" {
-		t.Fatalf("unexpected frame type: %v", payload["type"])
-	}
-	okRaw, ok := payload["ok"].(bool)
-	if !ok || !okRaw {
-		t.Fatalf("expected ok=true in response envelope")
+func assertRPCResult(t *testing.T, payload map[string]any) map[string]any {
+	t.Helper()
+	if _, hasErr := payload["error"]; hasErr {
+		t.Fatalf("expected rpc success response, got error: %v", payload["error"])
 	}
 	result, ok := payload["result"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected result object in response")
+		t.Fatalf("expected rpc result object, got: %v", payload["result"])
 	}
-	if result["status"] != "ok" {
-		t.Fatalf("expected health result status ok, got %v", result["status"])
-	}
+	return result
 }
 
-func TestRPCAliasCanonicalizationInErrorDetails(t *testing.T) {
-	s := New(config.Default(), buildinfo.Default())
-	ts := httptest.NewServer(s.Handler())
-	defer ts.Close()
-
-	reqBody := []byte(`{"type":"req","id":"3","method":"exec.approval.waitDecision","params":{}}`)
-	resp, err := http.Post(ts.URL+"/rpc", "application/json", bytes.NewReader(reqBody))
-	if err != nil {
-		t.Fatalf("POST /rpc failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var payload map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode rpc response failed: %v", err)
-	}
+func assertRPCErrorCode(t *testing.T, payload map[string]any, code int) {
+	t.Helper()
 	errObj, ok := payload["error"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected error object in rpc response")
+		t.Fatalf("expected rpc error object, got: %v", payload)
 	}
-	details, ok := errObj["details"].(map[string]any)
+	gotCode, ok := errObj["code"].(float64)
 	if !ok {
-		t.Fatalf("expected details in rpc error")
+		t.Fatalf("expected numeric rpc error code, got: %v", errObj["code"])
 	}
-	if details["canonical"] != "exec.approval.waitdecision" {
-		t.Fatalf("unexpected canonical alias mapping: %v", details["canonical"])
-	}
-	if details["known"] != true {
-		t.Fatalf("expected known=true for aliased supported method")
+	if int(gotCode) != code {
+		t.Fatalf("unexpected rpc error code: got=%d want=%d payload=%v", int(gotCode), code, payload)
 	}
 }

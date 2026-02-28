@@ -57,3 +57,33 @@
   - `go mod tidy`
   - `go test ./...`
   - `go vet ./...`
+
+### Phase 3 Gateway + Scheduler Delivered
+
+- Added gateway auth/connect lifecycle:
+  - `connect` with auth mode resolution (`none`/`token`/`password`).
+  - session registry with `sessions.list` + `session.status`.
+- Added scheduler primitives:
+  - queue/worker job execution model.
+  - `agent.wait` job wait/status contract.
+  - scheduler status in `status` payload.
+- Added test coverage for connect auth and session lifecycle.
+
+### Phase 4 Tool Runtime + Web/Auth Bridge Delivered
+
+- Added tool runtime orchestration package with provider interface and builtin bridge provider.
+- Added `tools.catalog` surface and runtime invocation path for browser tools.
+- Added web auth/login manager with:
+  - `web.login.start`
+  - `web.login.wait`
+  - `auth.oauth.complete`
+  - `auth.oauth.logout`
+- Added auth-gated browser bridge behavior:
+  - browser methods blocked until login is authorized.
+  - browser requests executed through scheduler + tool runtime and returned via `agent.wait`.
+- Added end-to-end gateway test covering full login -> browser request -> wait-for-result path.
+- Validation commands passed via Docker:
+  - `gofmt -w ./cmd ./internal`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go vet ./...`

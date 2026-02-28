@@ -21,9 +21,10 @@ type Config struct {
 }
 
 type GatewayConfig struct {
-	URL    string              `toml:"url"`
-	Token  string              `toml:"token"`
-	Server GatewayServerConfig `toml:"server"`
+	URL      string              `toml:"url"`
+	Token    string              `toml:"token"`
+	Password string              `toml:"password"`
+	Server   GatewayServerConfig `toml:"server"`
 }
 
 type GatewayServerConfig struct {
@@ -79,6 +80,7 @@ func Load(path string) (Config, error) {
 func applyEnvOverrides(cfg *Config) {
 	setIfPresent("OPENCLAW_GO_GATEWAY_URL", &cfg.Gateway.URL)
 	setIfPresent("OPENCLAW_GO_GATEWAY_TOKEN", &cfg.Gateway.Token)
+	setIfPresent("OPENCLAW_GO_GATEWAY_PASSWORD", &cfg.Gateway.Password)
 	setIfPresent("OPENCLAW_GO_WS_BIND", &cfg.Gateway.Server.Bind)
 	setIfPresent("OPENCLAW_GO_HTTP_BIND", &cfg.Gateway.Server.HTTPBind)
 	setIfPresent("OPENCLAW_GO_GATEWAY_AUTH_MODE", &cfg.Gateway.Server.AuthMode)

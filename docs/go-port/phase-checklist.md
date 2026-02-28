@@ -32,15 +32,15 @@
 
 ## Phase 3: Gateway and Scheduler Core
 
-- [ ] Port gateway auth/connect lifecycle
-- [ ] Port scheduler/session routing primitives
-- [ ] Validate connect/status/health semantics parity
+- [x] Port gateway auth/connect lifecycle
+- [x] Port scheduler/session routing primitives
+- [x] Validate connect/status/health semantics parity
 
 ## Phase 4: Tool Runtime and Bridges
 
-- [ ] Port tool runtime orchestration
-- [ ] Port website/browser auth bridge behavior
-- [ ] Validate bridge-driven runtime execution flow
+- [x] Port tool runtime orchestration
+- [x] Port website/browser auth bridge behavior
+- [x] Validate bridge-driven runtime execution flow
 
 ## Phase 5: Channels and Memory
 
