@@ -18,6 +18,7 @@ import (
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/protocol"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/rpc"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/scheduler"
+	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/security"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/state"
 	toolruntime "github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/tools/runtime"
 )
@@ -34,6 +35,7 @@ type Server struct {
 	channels  *channels.Registry
 	memory    *memory.Store
 	state     *state.Store
+	guard     *security.Guard
 	webLogin  *webbridge.Manager
 }
 
@@ -48,6 +50,7 @@ func New(cfg config.Config, build buildinfo.Info) *Server {
 		channels:  channels.NewRegistry(cfg.Channels.Telegram.BotToken, cfg.Channels.Telegram.DefaultTarget),
 		memory:    memory.NewStore(cfg.Runtime.StatePath, 10_000),
 		state:     state.NewStore(),
+		guard:     security.NewGuard(cfg.Security),
 		webLogin:  webbridge.NewManager(10 * time.Minute),
 	}
 
@@ -175,11 +178,28 @@ type dispatchError struct {
 }
 
 func (s *Server) dispatchRPC(ctx context.Context, requestID string, canonical string, params map[string]any) (map[string]any, *dispatchError) {
+	if isMutatingMethod(canonical) {
+		decision := s.guard.Evaluate(canonical, params)
+		if decision.Action == security.ActionBlock {
+			return nil, &dispatchError{
+				Code:    -32050,
+				Message: "blocked by security policy",
+				Details: map[string]any{
+					"method": canonical,
+					"action": decision.Action,
+					"reason": decision.Reason,
+				},
+			}
+		}
+	}
+
 	switch canonical {
 	case "health":
 		return s.healthPayload(), nil
 	case "status":
 		return s.statusPayload(), nil
+	case "config.get":
+		return s.handleConfigGet(), nil
 	case "connect":
 		return s.handleConnect(params)
 	case "sessions.list":
@@ -222,6 +242,22 @@ func (s *Server) dispatchRPC(ctx context.Context, requestID string, canonical st
 				"known":     known,
 			},
 		}
+	}
+}
+
+func (s *Server) handleConfigGet() map[string]any {
+	return map[string]any{
+		"gateway": map[string]any{
+			"url":      s.cfg.Gateway.URL,
+			"authMode": s.resolveAuthMode(),
+		},
+		"runtime": map[string]any{
+			"statePath": s.cfg.Runtime.StatePath,
+		},
+		"channels": map[string]any{
+			"telegramConfigured": strings.TrimSpace(s.cfg.Channels.Telegram.BotToken) != "",
+		},
+		"security": s.guard.Snapshot(),
 	}
 }
 
@@ -578,6 +614,7 @@ func (s *Server) statusPayload() map[string]any {
 		"webLogin": map[string]any{
 			"authorized": s.webLogin.HasAuthorizedSession(),
 		},
+		"security": s.guard.Snapshot(),
 	}
 }
 
@@ -705,6 +742,28 @@ func toInt(v any, fallback int) int {
 		return int(value)
 	default:
 		return fallback
+	}
+}
+
+func isMutatingMethod(method string) bool {
+	switch strings.ToLower(strings.TrimSpace(method)) {
+	case "connect",
+		"agent",
+		"send",
+		"chat.send",
+		"sessions.send",
+		"browser.request",
+		"browser.open",
+		"web.login.start",
+		"web.login.wait",
+		"auth.oauth.start",
+		"auth.oauth.wait",
+		"auth.oauth.complete",
+		"auth.oauth.logout",
+		"channels.logout":
+		return true
+	default:
+		return false
 	}
 }
 

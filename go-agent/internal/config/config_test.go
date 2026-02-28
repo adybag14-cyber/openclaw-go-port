@@ -23,6 +23,9 @@ func TestLoadDefaultsWhenConfigMissing(t *testing.T) {
 	if cfg.Runtime.StatePath != defaultStatePath {
 		t.Fatalf("unexpected default runtime.state_path: %s", cfg.Runtime.StatePath)
 	}
+	if cfg.Security.DefaultAction != "allow" {
+		t.Fatalf("unexpected default security.default_action: %s", cfg.Security.DefaultAction)
+	}
 }
 
 func TestLoadTomlAndEnvOverride(t *testing.T) {
@@ -40,6 +43,10 @@ auth_mode = "token"
 [runtime]
 audit_only = true
 state_path = "tmp/openclaw-go-state.json"
+
+[security]
+default_action = "review"
+policy_bundle_path = "tmp/policy-bundle.json"
 `
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("failed writing test config: %v", err)
@@ -48,6 +55,7 @@ state_path = "tmp/openclaw-go-state.json"
 	t.Setenv("OPENCLAW_GO_HTTP_BIND", "127.0.0.1:7654")
 	t.Setenv("OPENCLAW_GO_STATE_PATH", "tmp/override-state.json")
 	t.Setenv("OPENCLAW_GO_TELEGRAM_BOT_TOKEN", "tg-token")
+	t.Setenv("OPENCLAW_GO_POLICY_BUNDLE_PATH", "tmp/policy-from-env.json")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -71,5 +79,11 @@ state_path = "tmp/openclaw-go-state.json"
 	}
 	if cfg.Channels.Telegram.BotToken != "tg-token" {
 		t.Fatalf("telegram token env override not applied")
+	}
+	if cfg.Security.PolicyBundlePath != "tmp/policy-from-env.json" {
+		t.Fatalf("policy bundle env override not applied: %s", cfg.Security.PolicyBundlePath)
+	}
+	if cfg.Security.DefaultAction != "review" {
+		t.Fatalf("security.default_action expected review")
 	}
 }

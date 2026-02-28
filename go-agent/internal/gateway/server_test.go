@@ -337,6 +337,65 @@ func TestChannelsSendAndHistoryFlow(t *testing.T) {
 	}
 }
 
+func TestSecurityPolicyBlocksConfiguredMethods(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-security"
+	cfg.Channels.Telegram.BotToken = "telegram-bot-token"
+	cfg.Security.ToolPolicies = map[string]string{
+		"browser.request": "block",
+	}
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	start := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "security-login-start",
+		"method": "web.login.start",
+		"params": map[string]any{},
+	})
+	startResult := assertRPCResult(t, start)
+	loginObj, _ := startResult["login"].(map[string]any)
+	loginID, _ := loginObj["loginSessionId"].(string)
+	loginCode, _ := loginObj["code"].(string)
+	_ = rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "security-login-complete",
+		"method": "auth.oauth.complete",
+		"params": map[string]any{
+			"loginSessionId": loginID,
+			"code":           loginCode,
+		},
+	})
+
+	blocked := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "blocked-browser",
+		"method": "browser.request",
+		"params": map[string]any{
+			"url": "https://chatgpt.com",
+		},
+	})
+	assertRPCErrorCode(t, blocked, -32050)
+
+	configResp := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "config-get",
+		"method": "config.get",
+		"params": map[string]any{},
+	})
+	configResult := assertRPCResult(t, configResp)
+	securityObj, ok := configResult["security"].(map[string]any)
+	if !ok {
+		t.Fatalf("config.get should include security snapshot")
+	}
+	if securityObj["defaultAction"] == nil {
+		t.Fatalf("security snapshot missing default action")
+	}
+}
+
 func rpcCall(t *testing.T, baseURL string, frame map[string]any) map[string]any {
 	t.Helper()
 	body, err := json.Marshal(frame)

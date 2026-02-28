@@ -20,6 +20,7 @@ type Config struct {
 	Gateway  GatewayConfig  `toml:"gateway"`
 	Runtime  RuntimeConfig  `toml:"runtime"`
 	Channels ChannelsConfig `toml:"channels"`
+	Security SecurityConfig `toml:"security"`
 }
 
 type GatewayConfig struct {
@@ -49,6 +50,13 @@ type TelegramChannelConfig struct {
 	DefaultTarget string `toml:"default_target"`
 }
 
+type SecurityConfig struct {
+	PolicyBundlePath       string            `toml:"policy_bundle_path"`
+	DefaultAction          string            `toml:"default_action"`
+	ToolPolicies           map[string]string `toml:"tool_policies"`
+	BlockedMessagePatterns []string          `toml:"blocked_message_patterns"`
+}
+
 func Default() Config {
 	return Config{
 		Gateway: GatewayConfig{
@@ -67,6 +75,15 @@ func Default() Config {
 			Telegram: TelegramChannelConfig{
 				BotToken:      "",
 				DefaultTarget: "",
+			},
+		},
+		Security: SecurityConfig{
+			PolicyBundlePath: "memory://security-policy.json",
+			DefaultAction:    "allow",
+			ToolPolicies:     map[string]string{},
+			BlockedMessagePatterns: []string{
+				"rm -rf /",
+				"del /f /s /q",
 			},
 		},
 	}
@@ -106,6 +123,7 @@ func applyEnvOverrides(cfg *Config) {
 	setIfPresent("OPENCLAW_GO_STATE_PATH", &cfg.Runtime.StatePath)
 	setIfPresent("OPENCLAW_GO_TELEGRAM_BOT_TOKEN", &cfg.Channels.Telegram.BotToken)
 	setIfPresent("OPENCLAW_GO_TELEGRAM_DEFAULT_TARGET", &cfg.Channels.Telegram.DefaultTarget)
+	setIfPresent("OPENCLAW_GO_POLICY_BUNDLE_PATH", &cfg.Security.PolicyBundlePath)
 }
 
 func setIfPresent(env string, dest *string) {
@@ -132,6 +150,9 @@ func validate(cfg Config) error {
 	}
 	if strings.TrimSpace(cfg.Runtime.StatePath) == "" {
 		return errors.New("runtime.state_path cannot be empty")
+	}
+	if strings.TrimSpace(cfg.Security.DefaultAction) == "" {
+		return errors.New("security.default_action cannot be empty")
 	}
 	return nil
 }

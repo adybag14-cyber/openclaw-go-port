@@ -50,9 +50,9 @@
 
 ## Phase 6: Security and Policies
 
-- [ ] Port policy bundle + guard layers
+- [x] Port policy bundle + guard layers
 - [ ] Port telemetry and credential policy behaviors
-- [ ] Validate policy outcomes against Rust baseline
+- [x] Validate policy outcomes against Rust baseline
 
 ## Phase 7: Advanced Runtime Features
 

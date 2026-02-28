@@ -19,7 +19,7 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 | `src/persistent_memory.rs` | `go-agent/internal/memory/persist` | in-progress | JSON persistence path support for memory store (`runtime.state_path`) |
 | `src/state.rs` | `go-agent/internal/state` | in-progress | Session state tracker (last channel/method/message counters) |
 | `src/session_key.rs` | `go-agent/internal/session` | not-started | Phase 5 target |
-| `src/security/*` | `go-agent/internal/security/*` | not-started | Phase 6 target |
+| `src/security/*` | `go-agent/internal/security/*` | in-progress | Policy guard scaffold with tool-policy + message-pattern enforcement and bundle loading |
 | `src/security_audit.rs` | `go-agent/internal/security/audit` | not-started | Phase 6 target |
 | `src/routines.rs` | `go-agent/internal/routines` | not-started | Phase 7 target |
 | `src/wasm_runtime.rs` | `go-agent/internal/wasm/runtime` | not-started | Phase 7 target |
@@ -30,6 +30,6 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 ## Current Gap Summary
 
 - Completed: `1`
-- In-progress: `14`
-- Not-started: `7`
+- In-progress: `15`
+- Not-started: `6`
 - Deferred: `0`

@@ -112,3 +112,23 @@
   - `go mod tidy`
   - `go test ./...`
   - `go vet ./...`
+
+### Phase 6 Security/Policy Slice Delivered (Partial)
+
+- Added `internal/security` guard layer with:
+  - default action policy (`allow/review/block`)
+  - per-method tool policies
+  - blocked message pattern enforcement
+  - optional JSON policy bundle loading (`security.policy_bundle_path`)
+- Wired security guard into gateway dispatch:
+  - mutating methods are evaluated before execution
+  - blocked methods return deterministic policy error (`-32050`)
+  - `config.get` exposes current security snapshot
+- Added tests:
+  - security guard unit tests (tool policy, pattern block, bundle load)
+  - gateway integration test for policy-enforced blocking
+- Validation commands passed via Docker:
+  - `gofmt -w ./cmd ./internal`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go vet ./...`
