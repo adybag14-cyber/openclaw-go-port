@@ -35,6 +35,18 @@ func TestLoadDefaultsWhenConfigMissing(t *testing.T) {
 	if cfg.Security.CredentialLeakAction != "block" {
 		t.Fatalf("unexpected default security.credential_leak_action: %s", cfg.Security.CredentialLeakAction)
 	}
+	if !cfg.Security.LoopGuardEnabled {
+		t.Fatalf("expected default security.loop_guard_enabled=true")
+	}
+	if cfg.Security.LoopGuardWindowMS <= 0 {
+		t.Fatalf("expected positive default security.loop_guard_window_ms")
+	}
+	if cfg.Security.LoopGuardMaxHits <= 0 {
+		t.Fatalf("expected positive default security.loop_guard_max_hits")
+	}
+	if cfg.Security.RiskReviewThreshold <= 0 || cfg.Security.RiskBlockThreshold <= 0 {
+		t.Fatalf("expected positive default risk thresholds")
+	}
 }
 
 func TestLoadTomlAndEnvOverride(t *testing.T) {
@@ -122,5 +134,22 @@ profile = "invalid"
 	_, err := Load(path)
 	if err == nil {
 		t.Fatalf("expected runtime.profile validation error")
+	}
+}
+
+func TestSecurityRiskThresholdValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "openclaw-go.toml")
+	content := `
+[security]
+risk_review_threshold = 80
+risk_block_threshold = 70
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed writing test config: %v", err)
+	}
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatalf("expected security threshold validation error")
 	}
 }

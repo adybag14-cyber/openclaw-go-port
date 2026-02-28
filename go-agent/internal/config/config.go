@@ -61,6 +61,11 @@ type SecurityConfig struct {
 	TelemetryAction         string            `toml:"telemetry_action"`
 	CredentialSensitiveKeys []string          `toml:"credential_sensitive_keys"`
 	CredentialLeakAction    string            `toml:"credential_leak_action"`
+	LoopGuardEnabled        bool              `toml:"loop_guard_enabled"`
+	LoopGuardWindowMS       int               `toml:"loop_guard_window_ms"`
+	LoopGuardMaxHits        int               `toml:"loop_guard_max_hits"`
+	RiskReviewThreshold     int               `toml:"risk_review_threshold"`
+	RiskBlockThreshold      int               `toml:"risk_block_threshold"`
 }
 
 func Default() Config {
@@ -107,6 +112,11 @@ func Default() Config {
 				"authorization",
 			},
 			CredentialLeakAction: "block",
+			LoopGuardEnabled:     true,
+			LoopGuardWindowMS:    5000,
+			LoopGuardMaxHits:     8,
+			RiskReviewThreshold:  70,
+			RiskBlockThreshold:   90,
 		},
 	}
 }
@@ -190,6 +200,21 @@ func validate(cfg Config) error {
 	}
 	if strings.TrimSpace(cfg.Security.CredentialLeakAction) == "" {
 		return errors.New("security.credential_leak_action cannot be empty")
+	}
+	if cfg.Security.LoopGuardWindowMS < 0 {
+		return errors.New("security.loop_guard_window_ms cannot be negative")
+	}
+	if cfg.Security.LoopGuardMaxHits < 0 {
+		return errors.New("security.loop_guard_max_hits cannot be negative")
+	}
+	if cfg.Security.RiskReviewThreshold < 0 || cfg.Security.RiskReviewThreshold > 100 {
+		return errors.New("security.risk_review_threshold must be between 0 and 100")
+	}
+	if cfg.Security.RiskBlockThreshold < 0 || cfg.Security.RiskBlockThreshold > 100 {
+		return errors.New("security.risk_block_threshold must be between 0 and 100")
+	}
+	if cfg.Security.RiskBlockThreshold < cfg.Security.RiskReviewThreshold {
+		return errors.New("security.risk_block_threshold must be >= security.risk_review_threshold")
 	}
 	return nil
 }

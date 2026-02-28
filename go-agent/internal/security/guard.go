@@ -3,7 +3,10 @@ package security
 import (
 	"encoding/json"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type Action string
@@ -15,8 +18,10 @@ const (
 )
 
 type Decision struct {
-	Action Action `json:"action"`
-	Reason string `json:"reason,omitempty"`
+	Action    Action   `json:"action"`
+	Reason    string   `json:"reason,omitempty"`
+	RiskScore int      `json:"riskScore,omitempty"`
+	Signals   []string `json:"signals,omitempty"`
 }
 
 type GuardConfig struct {
@@ -28,16 +33,30 @@ type GuardConfig struct {
 	TelemetryAction         string
 	CredentialSensitiveKeys []string
 	CredentialLeakAction    string
+	LoopGuardEnabled        bool
+	LoopGuardWindowMS       int
+	LoopGuardMaxHits        int
+	RiskReviewThreshold     int
+	RiskBlockThreshold      int
+}
+
+type toolPolicyMatcher struct {
+	pattern string
+	action  Action
 }
 
 type Guard struct {
 	defaultAction    Action
 	toolPolicies     map[string]Action
+	toolMatchers     []toolPolicyMatcher
 	blockedPhrases   []string
 	telemetryTags    map[string]struct{}
 	telemetryAction  Action
 	sensitiveKeys    map[string]struct{}
 	credentialAction Action
+	riskReviewAt     int
+	riskBlockAt      int
+	loopGuard        *ToolLoopGuard
 	lastError        string
 }
 
@@ -49,17 +68,26 @@ type policyBundle struct {
 	TelemetryAction         string            `json:"telemetry_action"`
 	CredentialSensitiveKeys []string          `json:"credential_sensitive_keys"`
 	CredentialLeakAction    string            `json:"credential_leak_action"`
+	LoopGuardEnabled        *bool             `json:"loop_guard_enabled"`
+	LoopGuardWindowMS       *int              `json:"loop_guard_window_ms"`
+	LoopGuardMaxHits        *int              `json:"loop_guard_max_hits"`
+	RiskReviewThreshold     *int              `json:"risk_review_threshold"`
+	RiskBlockThreshold      *int              `json:"risk_block_threshold"`
 }
 
 func NewGuard(cfg GuardConfig) *Guard {
 	g := &Guard{
 		defaultAction:    parseAction(cfg.DefaultAction),
 		toolPolicies:     map[string]Action{},
+		toolMatchers:     make([]toolPolicyMatcher, 0, 16),
 		blockedPhrases:   normalizePhrases(cfg.BlockedMessagePatterns),
 		telemetryTags:    normalizeSet(cfg.TelemetryHighRiskTags),
 		telemetryAction:  parseAction(cfg.TelemetryAction),
 		sensitiveKeys:    normalizeSet(cfg.CredentialSensitiveKeys),
 		credentialAction: parseAction(cfg.CredentialLeakAction),
+		riskReviewAt:     normalizeThreshold(cfg.RiskReviewThreshold, 70),
+		riskBlockAt:      normalizeThreshold(cfg.RiskBlockThreshold, 90),
+		loopGuard:        NewToolLoopGuard(time.Duration(cfg.LoopGuardWindowMS)*time.Millisecond, cfg.LoopGuardMaxHits, cfg.LoopGuardEnabled),
 		lastError:        "",
 	}
 	if g.defaultAction == "" {
@@ -76,7 +104,7 @@ func NewGuard(cfg GuardConfig) *Guard {
 		if action == "" {
 			continue
 		}
-		g.toolPolicies[normalizeMethod(method)] = action
+		g.addToolPolicy(method, action)
 	}
 	g.loadBundle(cfg.PolicyBundlePath)
 	return g
@@ -84,22 +112,38 @@ func NewGuard(cfg GuardConfig) *Guard {
 
 func (g *Guard) Evaluate(method string, params map[string]any) Decision {
 	canonical := normalizeMethod(method)
+	riskScore := 0
+	signals := make([]string, 0, 8)
 
-	if action, ok := g.toolPolicies[canonical]; ok {
+	if action, ok := g.policyActionFor(canonical); ok {
 		switch action {
 		case ActionBlock:
-			return Decision{Action: ActionBlock, Reason: "blocked by tool policy"}
+			return Decision{Action: ActionBlock, Reason: "blocked by tool policy", RiskScore: 100, Signals: []string{"tool_policy:block"}}
 		case ActionReview:
-			return Decision{Action: ActionReview, Reason: "flagged by tool policy"}
+			return Decision{Action: ActionReview, Reason: "flagged by tool policy", RiskScore: 80, Signals: []string{"tool_policy:review"}}
+		}
+	}
+
+	if triggered, hits := g.loopGuard.Register(canonical, params); triggered {
+		return Decision{
+			Action:    ActionBlock,
+			Reason:    "blocked by tool loop guard",
+			RiskScore: 100,
+			Signals: []string{
+				"loop_guard:triggered",
+				"loop_guard:hits=" + intString(hits),
+			},
 		}
 	}
 
 	if credentialLeakScanEnabled(canonical) && g.containsCredentialLeak(params) {
+		riskScore = maxInt(riskScore, 95)
+		signals = append(signals, "credential_leak:key")
 		switch g.credentialAction {
 		case ActionBlock:
-			return Decision{Action: ActionBlock, Reason: "blocked by credential leak policy"}
+			return Decision{Action: ActionBlock, Reason: "blocked by credential leak policy", RiskScore: riskScore, Signals: signals}
 		case ActionReview:
-			return Decision{Action: ActionReview, Reason: "credential leak requires review"}
+			return Decision{Action: ActionReview, Reason: "credential leak requires review", RiskScore: riskScore, Signals: signals}
 		}
 	}
 
@@ -109,37 +153,66 @@ func (g *Guard) Evaluate(method string, params map[string]any) Decision {
 		for _, phrase := range g.blockedPhrases {
 			if strings.Contains(lower, phrase) {
 				return Decision{
-					Action: ActionBlock,
-					Reason: "blocked by unsafe message pattern",
+					Action:    ActionBlock,
+					Reason:    "blocked by unsafe message pattern",
+					RiskScore: 100,
+					Signals:   []string{"blocked_pattern"},
 				}
 			}
 		}
 		if looksLikeCredential(lower) {
+			riskScore = maxInt(riskScore, 90)
+			signals = append(signals, "credential_leak:heuristic")
 			switch g.credentialAction {
 			case ActionBlock:
-				return Decision{Action: ActionBlock, Reason: "blocked by credential content heuristic"}
+				return Decision{Action: ActionBlock, Reason: "blocked by credential content heuristic", RiskScore: riskScore, Signals: signals}
 			case ActionReview:
-				return Decision{Action: ActionReview, Reason: "credential content requires review"}
+				return Decision{Action: ActionReview, Reason: "credential content requires review", RiskScore: riskScore, Signals: signals}
 			}
 		}
+
+		messageRisk, messageSignals := analyzePromptRisk(lower)
+		if messageRisk > riskScore {
+			riskScore = messageRisk
+		}
+		signals = append(signals, messageSignals...)
 	}
 
 	if g.containsTelemetryRisk(params) {
+		riskScore = maxInt(riskScore, 85)
+		signals = append(signals, "telemetry:high_risk_tag")
 		switch g.telemetryAction {
 		case ActionBlock:
-			return Decision{Action: ActionBlock, Reason: "blocked by telemetry high-risk tag"}
+			return Decision{Action: ActionBlock, Reason: "blocked by telemetry high-risk tag", RiskScore: riskScore, Signals: signals}
 		case ActionReview:
-			return Decision{Action: ActionReview, Reason: "telemetry high-risk tag requires review"}
+			return Decision{Action: ActionReview, Reason: "telemetry high-risk tag requires review", RiskScore: riskScore, Signals: signals}
+		}
+	}
+
+	if riskScore >= g.riskBlockAt {
+		return Decision{
+			Action:    ActionBlock,
+			Reason:    "blocked by safety risk score",
+			RiskScore: riskScore,
+			Signals:   dedupeStrings(signals),
+		}
+	}
+	if riskScore >= g.riskReviewAt {
+		return Decision{
+			Action:    ActionReview,
+			Reason:    "review required by safety risk score",
+			RiskScore: riskScore,
+			Signals:   dedupeStrings(signals),
 		}
 	}
 
 	switch g.defaultAction {
 	case ActionReview:
-		return Decision{Action: ActionReview, Reason: "default review policy"}
+		return Decision{Action: ActionReview, Reason: "default review policy", RiskScore: riskScore, Signals: dedupeStrings(signals)}
 	case ActionBlock:
-		return Decision{Action: ActionBlock, Reason: "default block policy"}
+		return Decision{Action: ActionBlock, Reason: "default block policy", RiskScore: riskScore, Signals: dedupeStrings(signals)}
 	default:
-		return Decision{Action: ActionAllow}
+		return Decision{Action: ActionAllow, RiskScore: riskScore, Signals: dedupeStrings(signals)}
 	}
 }
 
@@ -147,6 +220,9 @@ func (g *Guard) Snapshot() map[string]any {
 	toolPolicies := make(map[string]string, len(g.toolPolicies))
 	for method, action := range g.toolPolicies {
 		toolPolicies[method] = string(action)
+	}
+	for _, matcher := range g.toolMatchers {
+		toolPolicies[matcher.pattern] = string(matcher.action)
 	}
 	return map[string]any{
 		"defaultAction":           g.defaultAction,
@@ -156,6 +232,9 @@ func (g *Guard) Snapshot() map[string]any {
 		"telemetryTags":           keys(g.telemetryTags),
 		"credentialLeakAction":    g.credentialAction,
 		"credentialSensitiveKeys": keys(g.sensitiveKeys),
+		"riskReviewThreshold":     g.riskReviewAt,
+		"riskBlockThreshold":      g.riskBlockAt,
+		"loopGuard":               g.loopGuard.Snapshot(),
 		"lastError":               g.lastError,
 	}
 }
@@ -184,7 +263,7 @@ func (g *Guard) loadBundle(path string) {
 	}
 	for method, policy := range bundle.ToolPolicies {
 		if action := parseAction(policy); action != "" {
-			g.toolPolicies[normalizeMethod(method)] = action
+			g.addToolPolicy(method, action)
 		}
 	}
 	if len(bundle.BlockedMessagePatterns) > 0 {
@@ -202,6 +281,29 @@ func (g *Guard) loadBundle(path string) {
 	for key := range normalizeSet(bundle.CredentialSensitiveKeys) {
 		g.sensitiveKeys[key] = struct{}{}
 	}
+	if bundle.RiskReviewThreshold != nil {
+		g.riskReviewAt = normalizeThreshold(*bundle.RiskReviewThreshold, g.riskReviewAt)
+	}
+	if bundle.RiskBlockThreshold != nil {
+		g.riskBlockAt = normalizeThreshold(*bundle.RiskBlockThreshold, g.riskBlockAt)
+	}
+	if g.riskBlockAt < g.riskReviewAt {
+		g.riskBlockAt = g.riskReviewAt
+	}
+	loopSnapshot := g.loopGuard.Snapshot()
+	enabled := boolFromAny(loopSnapshot["enabled"], true)
+	windowMS := intFromAny(loopSnapshot["windowMs"], 5000)
+	maxHits := intFromAny(loopSnapshot["maxHits"], 8)
+	if bundle.LoopGuardEnabled != nil {
+		enabled = *bundle.LoopGuardEnabled
+	}
+	if bundle.LoopGuardWindowMS != nil && *bundle.LoopGuardWindowMS > 0 {
+		windowMS = *bundle.LoopGuardWindowMS
+	}
+	if bundle.LoopGuardMaxHits != nil && *bundle.LoopGuardMaxHits > 0 {
+		maxHits = *bundle.LoopGuardMaxHits
+	}
+	g.loopGuard = NewToolLoopGuard(time.Duration(windowMS)*time.Millisecond, maxHits, enabled)
 }
 
 func (g *Guard) containsTelemetryRisk(params map[string]any) bool {
@@ -280,6 +382,171 @@ func looksLikeCredential(lower string) bool {
 		return true
 	}
 	return false
+}
+
+func analyzePromptRisk(lower string) (int, []string) {
+	score := 0
+	signals := make([]string, 0, 6)
+
+	add := func(points int, signal string) {
+		score += points
+		signals = append(signals, signal)
+	}
+
+	if strings.Contains(lower, "ignore previous instructions") {
+		add(35, "prompt_injection:ignore_previous_instructions")
+	}
+	if strings.Contains(lower, "system prompt") || strings.Contains(lower, "developer message") {
+		add(30, "prompt_injection:system_prompt_exfil")
+	}
+	if strings.Contains(lower, "jailbreak") || strings.Contains(lower, "disable safety") {
+		add(30, "prompt_injection:safety_bypass")
+	}
+	if strings.Contains(lower, "sudo ") || strings.Contains(lower, "rm -rf") || strings.Contains(lower, "del /f /s /q") {
+		add(25, "command:destructive")
+	}
+	if strings.Contains(lower, "powershell -enc") || strings.Contains(lower, "base64 -d") {
+		add(20, "command:obfuscation")
+	}
+	if strings.Contains(lower, "curl http") || strings.Contains(lower, "wget http") {
+		add(10, "command:remote_fetch")
+	}
+	if score > 100 {
+		score = 100
+	}
+	return score, signals
+}
+
+func (g *Guard) addToolPolicy(pattern string, action Action) {
+	normalized := normalizeMethod(pattern)
+	if normalized == "" || action == "" {
+		return
+	}
+	if strings.Contains(normalized, "*") {
+		g.toolMatchers = append(g.toolMatchers, toolPolicyMatcher{pattern: normalized, action: action})
+		return
+	}
+	g.toolPolicies[normalized] = action
+}
+
+func (g *Guard) policyActionFor(method string) (Action, bool) {
+	if action, ok := g.toolPolicies[method]; ok {
+		return action, true
+	}
+
+	bestLen := -1
+	var bestAction Action
+	for _, matcher := range g.toolMatchers {
+		if !wildcardMatch(matcher.pattern, method) {
+			continue
+		}
+		if len(matcher.pattern) > bestLen {
+			bestLen = len(matcher.pattern)
+			bestAction = matcher.action
+		}
+	}
+	if bestLen >= 0 {
+		return bestAction, true
+	}
+	return "", false
+}
+
+func wildcardMatch(pattern string, value string) bool {
+	if pattern == "*" {
+		return true
+	}
+	if !strings.Contains(pattern, "*") {
+		return pattern == value
+	}
+
+	parts := strings.Split(pattern, "*")
+	index := 0
+	anchoredPrefix := !strings.HasPrefix(pattern, "*")
+	anchoredSuffix := !strings.HasSuffix(pattern, "*")
+
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		found := strings.Index(value[index:], part)
+		if found < 0 {
+			return false
+		}
+		if i == 0 && anchoredPrefix && found != 0 {
+			return false
+		}
+		index += found + len(part)
+	}
+
+	if anchoredSuffix {
+		last := parts[len(parts)-1]
+		if last == "" {
+			return true
+		}
+		return strings.HasSuffix(value, last)
+	}
+	return true
+}
+
+func normalizeThreshold(value int, fallback int) int {
+	if value <= 0 || value > 100 {
+		return fallback
+	}
+	return value
+}
+
+func maxInt(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func dedupeStrings(items []string) []string {
+	if len(items) == 0 {
+		return []string{}
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		normalized := strings.TrimSpace(item)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func intString(v int) string {
+	return strconv.Itoa(v)
+}
+
+func boolFromAny(v any, fallback bool) bool {
+	switch value := v.(type) {
+	case bool:
+		return value
+	default:
+		return fallback
+	}
+}
+
+func intFromAny(v any, fallback int) int {
+	switch value := v.(type) {
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case float64:
+		return int(value)
+	default:
+		return fallback
+	}
 }
 
 func parseAction(raw string) Action {
