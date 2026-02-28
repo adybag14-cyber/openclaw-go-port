@@ -18,13 +18,14 @@ type SendRequest struct {
 }
 
 type SendReceipt struct {
-	ID        string `json:"id"`
-	Channel   string `json:"channel"`
-	Provider  string `json:"provider"`
-	To        string `json:"to,omitempty"`
-	Message   string `json:"message"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"createdAt"`
+	ID        string         `json:"id"`
+	Channel   string         `json:"channel"`
+	Provider  string         `json:"provider"`
+	To        string         `json:"to,omitempty"`
+	Message   string         `json:"message"`
+	Status    string         `json:"status"`
+	CreatedAt string         `json:"createdAt"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
 }
 
 type ChannelStatus struct {

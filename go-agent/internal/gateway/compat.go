@@ -29,7 +29,9 @@ type compatState struct {
 	presence map[string]any
 	events   []map[string]any
 
-	models []map[string]any
+	models                []map[string]any
+	telegramModelByTarget map[string]string
+	telegramAuthByTarget  map[string]string
 
 	agentSeq   int
 	agents     map[string]map[string]any
@@ -112,30 +114,99 @@ func newCompatState() *compatState {
 				"capability": "fast-response",
 			},
 		},
-		agentSeq:          0,
-		agents:            map[string]map[string]any{},
-		agentFiles:        map[string]map[string]map[string]any{},
-		skillSeq:          0,
-		installedSkills:   map[string]map[string]any{},
-		cronSeq:           0,
-		cronJobs:          map[string]map[string]any{},
-		cronRuns:          make([]map[string]any, 0, 256),
-		wizard:            map[string]any{"active": false, "step": 0, "status": "idle"},
-		devicePairSeq:     0,
-		devicePairs:       map[string]map[string]any{},
-		deviceTokenSeq:    0,
-		deviceTokens:      map[string]map[string]any{},
-		nodePairSeq:       0,
-		nodePairs:         map[string]map[string]any{},
-		nodes:             map[string]map[string]any{"node-local": {"nodeId": "node-local", "name": "local", "status": "online"}},
-		nodeEvents:        make([]map[string]any, 0, 256),
-		approvalSeq:       0,
-		globalApprovals:   map[string]any{"mode": "prompt", "updatedAt": now},
-		nodeApprovals:     map[string]map[string]any{},
-		pendingApprovals:  map[string]map[string]any{},
-		configOverlay:     map[string]any{},
-		sessionTombstones: map[string]bool{},
+		telegramModelByTarget: map[string]string{},
+		telegramAuthByTarget:  map[string]string{},
+		agentSeq:              0,
+		agents:                map[string]map[string]any{},
+		agentFiles:            map[string]map[string]map[string]any{},
+		skillSeq:              0,
+		installedSkills:       map[string]map[string]any{},
+		cronSeq:               0,
+		cronJobs:              map[string]map[string]any{},
+		cronRuns:              make([]map[string]any, 0, 256),
+		wizard:                map[string]any{"active": false, "step": 0, "status": "idle"},
+		devicePairSeq:         0,
+		devicePairs:           map[string]map[string]any{},
+		deviceTokenSeq:        0,
+		deviceTokens:          map[string]map[string]any{},
+		nodePairSeq:           0,
+		nodePairs:             map[string]map[string]any{},
+		nodes:                 map[string]map[string]any{"node-local": {"nodeId": "node-local", "name": "local", "status": "online"}},
+		nodeEvents:            make([]map[string]any, 0, 256),
+		approvalSeq:           0,
+		globalApprovals:       map[string]any{"mode": "prompt", "updatedAt": now},
+		nodeApprovals:         map[string]map[string]any{},
+		pendingApprovals:      map[string]map[string]any{},
+		configOverlay:         map[string]any{},
+		sessionTombstones:     map[string]bool{},
 	}
+}
+
+func (c *compatState) listModelIDs() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make([]string, 0, len(c.models))
+	for _, item := range c.models {
+		id := strings.ToLower(toString(item["id"], ""))
+		if id != "" {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (c *compatState) isKnownModel(model string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	if normalized == "" {
+		return false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, item := range c.models {
+		if strings.EqualFold(toString(item["id"], ""), normalized) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *compatState) getTelegramModel(target string) string {
+	targetKey := strings.ToLower(strings.TrimSpace(target))
+	c.mu.RLock()
+	model := strings.ToLower(strings.TrimSpace(c.telegramModelByTarget[targetKey]))
+	c.mu.RUnlock()
+	if model == "" {
+		return "gpt-5.2"
+	}
+	return model
+}
+
+func (c *compatState) setTelegramModel(target string, model string) string {
+	targetKey := strings.ToLower(strings.TrimSpace(target))
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	if normalized == "" {
+		normalized = "gpt-5.2"
+	}
+	c.mu.Lock()
+	c.telegramModelByTarget[targetKey] = normalized
+	c.mu.Unlock()
+	return normalized
+}
+
+func (c *compatState) getTelegramAuth(target string) string {
+	targetKey := strings.ToLower(strings.TrimSpace(target))
+	c.mu.RLock()
+	loginID := strings.TrimSpace(c.telegramAuthByTarget[targetKey])
+	c.mu.RUnlock()
+	return loginID
+}
+
+func (c *compatState) setTelegramAuth(target string, loginID string) {
+	targetKey := strings.ToLower(strings.TrimSpace(target))
+	c.mu.Lock()
+	c.telegramAuthByTarget[targetKey] = strings.TrimSpace(loginID)
+	c.mu.Unlock()
 }
 
 func (c *compatState) mergeConfig(params map[string]any) map[string]any {

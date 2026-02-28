@@ -655,6 +655,17 @@ func (s *Server) executeScheduledJob(ctx context.Context, job scheduler.Job) (an
 	case "send", "chat.send":
 		channel := strings.ToLower(toString(job.Params["channel"], "webchat"))
 		message := toString(job.Params["message"], toString(job.Params["text"], ""))
+		if channel == "telegram" {
+			if result, handled, err := s.handleTelegramCommand(job, message); handled {
+				if err != nil {
+					return nil, err
+				}
+				if job.SessionID != "" {
+					s.sessions.UpdateChannel(job.SessionID, "telegram")
+				}
+				return result, nil
+			}
+		}
 		receipt, err := s.channels.Send(ctx, channels.SendRequest{
 			Channel:   channel,
 			To:        toString(job.Params["to"], ""),

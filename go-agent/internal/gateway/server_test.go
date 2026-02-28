@@ -432,6 +432,121 @@ func TestChannelsSendAndHistoryFlow(t *testing.T) {
 	}
 }
 
+func TestTelegramCommandFlowModelAuthTTS(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-telegram-commands"
+	cfg.Channels.Telegram.BotToken = "telegram-bot-token"
+	cfg.Channels.Telegram.DefaultTarget = "chat-1"
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	connect := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "connect-telegram-cmd",
+		"method": "connect",
+		"params": map[string]any{
+			"role":    "client",
+			"channel": "telegram",
+		},
+	})
+	connectResult := assertRPCResult(t, connect)
+	sessionID, _ := connectResult["sessionId"].(string)
+	if sessionID == "" {
+		t.Fatalf("expected session id from connect")
+	}
+
+	runCommand := func(cmdID string, text string) map[string]any {
+		send := rpcCall(t, ts.URL, map[string]any{
+			"type":   "req",
+			"id":     cmdID,
+			"method": "send",
+			"params": map[string]any{
+				"sessionId": sessionID,
+				"message":   text,
+			},
+		})
+		sendResult := assertRPCResult(t, send)
+		jobID, _ := sendResult["jobId"].(string)
+		if jobID == "" {
+			t.Fatalf("expected job id for command %q", text)
+		}
+		wait := rpcCall(t, ts.URL, map[string]any{
+			"type":   "req",
+			"id":     cmdID + "-wait",
+			"method": "agent.wait",
+			"params": map[string]any{
+				"jobId":     jobID,
+				"timeoutMs": 3000,
+			},
+		})
+		waitResult := assertRPCResult(t, wait)
+		done, _ := waitResult["done"].(bool)
+		if !done {
+			t.Fatalf("expected command job completion for %q", text)
+		}
+		result, _ := waitResult["result"].(map[string]any)
+		return result
+	}
+
+	modelResult := runCommand("tg-cmd-model", "/model gpt-5.2-pro")
+	modelReceipt, _ := modelResult["result"].(map[string]any)
+	modelMeta, _ := modelReceipt["metadata"].(map[string]any)
+	if modelMeta["type"] != "model.set" {
+		t.Fatalf("expected model.set metadata, got %v", modelMeta["type"])
+	}
+	if modelMeta["currentModel"] != "gpt-5.2-pro" {
+		t.Fatalf("expected currentModel gpt-5.2-pro, got %v", modelMeta["currentModel"])
+	}
+
+	authStartResult := runCommand("tg-cmd-auth-start", "/auth")
+	authStartReceipt, _ := authStartResult["result"].(map[string]any)
+	authStartMeta, _ := authStartReceipt["metadata"].(map[string]any)
+	if authStartMeta["type"] != "auth.start" {
+		t.Fatalf("expected auth.start metadata, got %v", authStartMeta["type"])
+	}
+	code, _ := authStartMeta["code"].(string)
+	if code == "" {
+		t.Fatalf("expected auth code in auth.start metadata")
+	}
+
+	authCompleteResult := runCommand("tg-cmd-auth-complete", "/auth complete "+code)
+	authCompleteReceipt, _ := authCompleteResult["result"].(map[string]any)
+	authCompleteMeta, _ := authCompleteReceipt["metadata"].(map[string]any)
+	if authCompleteMeta["type"] != "auth.complete" {
+		t.Fatalf("expected auth.complete metadata, got %v", authCompleteMeta["type"])
+	}
+	loginObj, _ := authCompleteMeta["login"].(map[string]any)
+	if loginObj["status"] != "authorized" {
+		t.Fatalf("expected authorized login status, got %v", loginObj["status"])
+	}
+
+	ttsProviderResult := runCommand("tg-cmd-tts-provider", "/tts provider openai-voice")
+	ttsProviderReceipt, _ := ttsProviderResult["result"].(map[string]any)
+	ttsProviderMeta, _ := ttsProviderReceipt["metadata"].(map[string]any)
+	if ttsProviderMeta["type"] != "tts.provider" {
+		t.Fatalf("expected tts.provider metadata, got %v", ttsProviderMeta["type"])
+	}
+	if ttsProviderMeta["provider"] != "openai-voice" {
+		t.Fatalf("expected provider openai-voice, got %v", ttsProviderMeta["provider"])
+	}
+
+	ttsSayResult := runCommand("tg-cmd-tts-say", "/tts say hello from telegram")
+	ttsSayReceipt, _ := ttsSayResult["result"].(map[string]any)
+	ttsSayMeta, _ := ttsSayReceipt["metadata"].(map[string]any)
+	if ttsSayMeta["type"] != "tts.say" {
+		t.Fatalf("expected tts.say metadata, got %v", ttsSayMeta["type"])
+	}
+	if toString(ttsSayMeta["audioRef"], "") == "" {
+		t.Fatalf("expected audioRef in tts.say metadata")
+	}
+	if bytes, _ := ttsSayMeta["bytes"].(float64); int(bytes) <= 0 {
+		t.Fatalf("expected positive tts bytes, got %v", ttsSayMeta["bytes"])
+	}
+}
+
 func TestSecurityPolicyBlocksConfiguredMethods(t *testing.T) {
 	cfg := config.Default()
 	cfg.Runtime.StatePath = "memory://test-security"

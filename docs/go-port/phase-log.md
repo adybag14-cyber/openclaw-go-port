@@ -217,3 +217,32 @@
   - `gofmt -w ./cmd ./internal`
   - `go test ./...`
   - `go vet ./...`
+
+### v2.0 Program Phase 4 Slice: Telegram Command Parity (`/model`, `/auth`, `/tts`)
+
+- Added Telegram command execution path in Go gateway runtime:
+  - `send`/`chat.send` requests on `telegram` channel now intercept slash commands before generic send dispatch.
+  - Commands return structured `channels.SendReceipt` with command metadata payload.
+- Implemented `/model` command behavior:
+  - `/model` and `/model list|status` return current + available models.
+  - `/model <id>` validates against known model list and sets target-scoped active model.
+- Implemented `/auth` command behavior:
+  - `/auth` starts a browser login session and returns code + verification URI.
+  - `/auth status` reports current session state.
+  - `/auth complete <CODE>` completes the pending target-scoped login session.
+- Implemented `/tts` command behavior:
+  - `/tts status|on|off`
+  - `/tts provider <name>`
+  - `/tts say <text>` with synthesized audio metadata (`audioRef`, bytes).
+- Added compatibility state tracking for telegram target-scoped model/auth session mappings.
+- Added end-to-end gateway test coverage:
+  - connect telegram session
+  - `/model gpt-5.2-pro`
+  - `/auth` + `/auth complete <code>`
+  - `/tts provider openai-voice`
+  - `/tts say ...`
+  - validates command metadata and authorized auth completion.
+- Validation completed (Dockerized Go toolchain):
+  - `gofmt -w ./cmd ./internal`
+  - `go test ./...`
+  - `go vet ./...`
