@@ -334,3 +334,22 @@
   - `gofmt -w ./cmd ./internal`
   - `go test ./...`
   - `go vet ./...`
+
+### v2.0 Program Phase 9 Slice: Android/Termux + Optimization Build Matrix
+
+- Added release matrix build scripts:
+  - `scripts/build-matrix.ps1`
+  - `scripts/build-matrix.sh`
+- Build matrix now targets:
+  - `windows/amd64`
+  - `linux/amd64`
+  - `android/arm64` (Termux-ready artifact target)
+- Enforced optimization defaults in build scripts:
+  - `CGO_ENABLED=0`
+  - `-trimpath`
+  - stripped binaries via `-ldflags "-s -w"`
+  - SHA256 checksum manifest generation (`SHA256SUMS.txt`).
+- Updated `go-agent/README.md` with diagnostics usage and matrix build commands.
+- Validation completed:
+  - full Go validation matrix (`go test ./...`, `go vet ./...`)
+  - cross-build smoke for `windows/amd64`, `linux/amd64`, `android/arm64` inside Docker.

@@ -1,16 +1,41 @@
-# go-agent (Phase 1 Bootstrap)
+# go-agent
 
-This directory contains the initial Go port bootstrap for OpenClaw.
+Go port runtime for OpenClaw with parity-focused gateway, runtime, bridge, security, and diagnostics surfaces.
 
-## Current Scope
-
-- Config loading from TOML with environment variable overrides.
-- HTTP control surface skeleton:
-  - `GET /health` -> runtime metadata and uptime.
-  - `POST /rpc` -> phase-1 stub (`-32601` not implemented).
-
-## Run with Dockerized Go
+## Validate with Dockerized Go
 
 ```bash
-docker run --rm -v "$PWD/go-agent:/work" -w /work golang:1.22 sh -lc "go test ./... && go vet ./..."
+docker run --rm -v "$PWD/go-agent:/work" -w /work golang:1.22 sh -lc "export PATH=/usr/local/go/bin:$PATH; go test ./... && go vet ./..."
 ```
+
+## CLI Diagnostics
+
+- `openclaw-go --doctor`
+- `openclaw-go --security-audit`
+- `openclaw-go --list-methods`
+- Add `--deep` to include deep probe checks in doctor/audit output.
+
+## Release Matrix Build
+
+Windows PowerShell:
+
+```powershell
+pwsh ./scripts/build-matrix.ps1 -Version v2.0.0
+```
+
+POSIX shell:
+
+```bash
+sh ./scripts/build-matrix.sh v2.0.0
+```
+
+Artifacts include:
+- `openclaw-go-windows-amd64.exe`
+- `openclaw-go-linux-amd64`
+- `openclaw-go-android-arm64`
+- `SHA256SUMS.txt`
+
+The build scripts enforce:
+- `CGO_ENABLED=0`
+- stripped binaries (`-ldflags "-s -w"`)
+- deterministic matrix output suitable for Termux/Android deployment flows.
