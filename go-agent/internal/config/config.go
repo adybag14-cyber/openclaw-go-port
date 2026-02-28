@@ -3,18 +3,25 @@ package config
 import (
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 )
 
 const (
-	defaultGatewayURL  = "ws://127.0.0.1:8080/gateway"
-	defaultGatewayBind = "127.0.0.1:8765"
-	defaultHTTPBind    = "127.0.0.1:8766"
-	defaultAuthMode    = "auto"
-	defaultStatePath   = "memory://openclaw-go-state"
-	defaultProfile     = "core"
+	defaultGatewayURL                    = "ws://127.0.0.1:8080/gateway"
+	defaultGatewayBind                   = "127.0.0.1:8765"
+	defaultHTTPBind                      = "127.0.0.1:8766"
+	defaultAuthMode                      = "auto"
+	defaultStatePath                     = "memory://openclaw-go-state"
+	defaultProfile                       = "core"
+	defaultBrowserBridgeEndpoint         = "http://127.0.0.1:43010"
+	defaultBrowserBridgeRequestTimeoutMs = 180000
+	defaultBrowserBridgeRetries          = 2
+	defaultBrowserBridgeRetryBackoffMs   = 750
+	defaultBrowserBridgeCircuitFailures  = 3
+	defaultBrowserBridgeCircuitCooldown  = 10000
 )
 
 type Config struct {
@@ -38,9 +45,20 @@ type GatewayServerConfig struct {
 }
 
 type RuntimeConfig struct {
-	AuditOnly bool   `toml:"audit_only"`
-	StatePath string `toml:"state_path"`
-	Profile   string `toml:"profile"`
+	AuditOnly     bool                `toml:"audit_only"`
+	StatePath     string              `toml:"state_path"`
+	Profile       string              `toml:"profile"`
+	BrowserBridge BrowserBridgeConfig `toml:"browser_bridge"`
+}
+
+type BrowserBridgeConfig struct {
+	Enabled              bool   `toml:"enabled"`
+	Endpoint             string `toml:"endpoint"`
+	RequestTimeoutMs     int    `toml:"request_timeout_ms"`
+	Retries              int    `toml:"retries"`
+	RetryBackoffMs       int    `toml:"retry_backoff_ms"`
+	CircuitFailThreshold int    `toml:"circuit_fail_threshold"`
+	CircuitCooldownMs    int    `toml:"circuit_cooldown_ms"`
 }
 
 type ChannelsConfig struct {
@@ -82,6 +100,15 @@ func Default() Config {
 			AuditOnly: false,
 			StatePath: defaultStatePath,
 			Profile:   defaultProfile,
+			BrowserBridge: BrowserBridgeConfig{
+				Enabled:              true,
+				Endpoint:             defaultBrowserBridgeEndpoint,
+				RequestTimeoutMs:     defaultBrowserBridgeRequestTimeoutMs,
+				Retries:              defaultBrowserBridgeRetries,
+				RetryBackoffMs:       defaultBrowserBridgeRetryBackoffMs,
+				CircuitFailThreshold: defaultBrowserBridgeCircuitFailures,
+				CircuitCooldownMs:    defaultBrowserBridgeCircuitCooldown,
+			},
 		},
 		Channels: ChannelsConfig{
 			Telegram: TelegramChannelConfig{
@@ -154,6 +181,13 @@ func applyEnvOverrides(cfg *Config) {
 	setIfPresent("OPENCLAW_GO_GATEWAY_AUTH_MODE", &cfg.Gateway.Server.AuthMode)
 	setIfPresent("OPENCLAW_GO_STATE_PATH", &cfg.Runtime.StatePath)
 	setIfPresent("OPENCLAW_GO_RUNTIME_PROFILE", &cfg.Runtime.Profile)
+	setBoolIfPresent("OPENCLAW_GO_BROWSER_BRIDGE_ENABLED", &cfg.Runtime.BrowserBridge.Enabled)
+	setIfPresent("OPENCLAW_GO_BROWSER_BRIDGE_ENDPOINT", &cfg.Runtime.BrowserBridge.Endpoint)
+	setIntIfPresent("OPENCLAW_GO_BROWSER_BRIDGE_REQUEST_TIMEOUT_MS", &cfg.Runtime.BrowserBridge.RequestTimeoutMs)
+	setIntIfPresent("OPENCLAW_GO_BROWSER_BRIDGE_RETRIES", &cfg.Runtime.BrowserBridge.Retries)
+	setIntIfPresent("OPENCLAW_GO_BROWSER_BRIDGE_RETRY_BACKOFF_MS", &cfg.Runtime.BrowserBridge.RetryBackoffMs)
+	setIntIfPresent("OPENCLAW_GO_BROWSER_BRIDGE_CIRCUIT_FAIL_THRESHOLD", &cfg.Runtime.BrowserBridge.CircuitFailThreshold)
+	setIntIfPresent("OPENCLAW_GO_BROWSER_BRIDGE_CIRCUIT_COOLDOWN_MS", &cfg.Runtime.BrowserBridge.CircuitCooldownMs)
 	setIfPresent("OPENCLAW_GO_TELEGRAM_BOT_TOKEN", &cfg.Channels.Telegram.BotToken)
 	setIfPresent("OPENCLAW_GO_TELEGRAM_DEFAULT_TARGET", &cfg.Channels.Telegram.DefaultTarget)
 	setIfPresent("OPENCLAW_GO_POLICY_BUNDLE_PATH", &cfg.Security.PolicyBundlePath)
@@ -165,6 +199,32 @@ func setIfPresent(env string, dest *string) {
 		if trimmed != "" {
 			*dest = trimmed
 		}
+	}
+}
+
+func setBoolIfPresent(env string, dest *bool) {
+	if v, ok := os.LookupEnv(env); ok {
+		normalized := strings.ToLower(strings.TrimSpace(v))
+		switch normalized {
+		case "1", "true", "yes", "y", "on":
+			*dest = true
+		case "0", "false", "no", "n", "off":
+			*dest = false
+		}
+	}
+}
+
+func setIntIfPresent(env string, dest *int) {
+	if v, ok := os.LookupEnv(env); ok {
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			return
+		}
+		parsed, err := strconv.Atoi(trimmed)
+		if err != nil {
+			return
+		}
+		*dest = parsed
 	}
 }
 
@@ -191,6 +251,24 @@ func validate(cfg Config) error {
 	case "core", "edge":
 	default:
 		return errors.New("runtime.profile must be one of: core, edge")
+	}
+	if cfg.Runtime.BrowserBridge.Enabled && strings.TrimSpace(cfg.Runtime.BrowserBridge.Endpoint) == "" {
+		return errors.New("runtime.browser_bridge.endpoint cannot be empty when browser bridge is enabled")
+	}
+	if cfg.Runtime.BrowserBridge.RequestTimeoutMs <= 0 {
+		return errors.New("runtime.browser_bridge.request_timeout_ms must be > 0")
+	}
+	if cfg.Runtime.BrowserBridge.Retries < 0 {
+		return errors.New("runtime.browser_bridge.retries cannot be negative")
+	}
+	if cfg.Runtime.BrowserBridge.RetryBackoffMs < 0 {
+		return errors.New("runtime.browser_bridge.retry_backoff_ms cannot be negative")
+	}
+	if cfg.Runtime.BrowserBridge.CircuitFailThreshold < 1 {
+		return errors.New("runtime.browser_bridge.circuit_fail_threshold must be >= 1")
+	}
+	if cfg.Runtime.BrowserBridge.CircuitCooldownMs <= 0 {
+		return errors.New("runtime.browser_bridge.circuit_cooldown_ms must be > 0")
 	}
 	if strings.TrimSpace(cfg.Security.DefaultAction) == "" {
 		return errors.New("security.default_action cannot be empty")

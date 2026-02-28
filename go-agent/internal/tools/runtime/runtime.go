@@ -3,8 +3,11 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +43,20 @@ type ToolSpec struct {
 	Description string `json:"description"`
 }
 
+type RuntimeOptions struct {
+	BrowserBridge BrowserBridgeOptions
+}
+
+type BrowserBridgeOptions struct {
+	Enabled              bool
+	Endpoint             string
+	RequestTimeout       time.Duration
+	Retries              int
+	RetryBackoff         time.Duration
+	CircuitFailThreshold int
+	CircuitCooldown      time.Duration
+}
+
 type Runtime struct {
 	providers []Provider
 }
@@ -51,9 +68,56 @@ func New() *Runtime {
 }
 
 func NewDefault() *Runtime {
+	return NewDefaultWithOptions(DefaultRuntimeOptions())
+}
+
+func NewDefaultWithOptions(options RuntimeOptions) *Runtime {
 	rt := New()
-	rt.RegisterProvider(NewBuiltinBridgeProvider())
+	rt.RegisterProvider(NewBuiltinBridgeProviderWithOptions(options.BrowserBridge))
 	return rt
+}
+
+func DefaultRuntimeOptions() RuntimeOptions {
+	return RuntimeOptions{
+		BrowserBridge: DefaultBrowserBridgeOptions(),
+	}
+}
+
+func DefaultBrowserBridgeOptions() BrowserBridgeOptions {
+	return BrowserBridgeOptions{
+		Enabled:              true,
+		Endpoint:             "http://127.0.0.1:43010",
+		RequestTimeout:       180 * time.Second,
+		Retries:              2,
+		RetryBackoff:         750 * time.Millisecond,
+		CircuitFailThreshold: 3,
+		CircuitCooldown:      10 * time.Second,
+	}
+}
+
+func normalizeBrowserBridgeOptions(input BrowserBridgeOptions) BrowserBridgeOptions {
+	defaults := DefaultBrowserBridgeOptions()
+
+	out := input
+	if strings.TrimSpace(out.Endpoint) == "" {
+		out.Endpoint = defaults.Endpoint
+	}
+	if out.RequestTimeout <= 0 {
+		out.RequestTimeout = defaults.RequestTimeout
+	}
+	if out.Retries < 0 {
+		out.Retries = defaults.Retries
+	}
+	if out.RetryBackoff < 0 {
+		out.RetryBackoff = defaults.RetryBackoff
+	}
+	if out.CircuitFailThreshold < 1 {
+		out.CircuitFailThreshold = defaults.CircuitFailThreshold
+	}
+	if out.CircuitCooldown <= 0 {
+		out.CircuitCooldown = defaults.CircuitCooldown
+	}
+	return out
 }
 
 func (r *Runtime) RegisterProvider(provider Provider) {
@@ -97,14 +161,25 @@ func (r *Runtime) Catalog() []ToolSpec {
 }
 
 type BuiltinBridgeProvider struct {
-	mu   sync.RWMutex
-	seq  atomic.Uint64
-	jobs map[string]map[string]any
+	mu            sync.RWMutex
+	seq           atomic.Uint64
+	jobs          map[string]map[string]any
+	browser       BrowserBridgeOptions
+	httpClient    *http.Client
+	circuitLocker sync.Mutex
+	failures      int
+	openUntil     time.Time
 }
 
 func NewBuiltinBridgeProvider() *BuiltinBridgeProvider {
+	return NewBuiltinBridgeProviderWithOptions(DefaultBrowserBridgeOptions())
+}
+
+func NewBuiltinBridgeProviderWithOptions(options BrowserBridgeOptions) *BuiltinBridgeProvider {
 	return &BuiltinBridgeProvider{
-		jobs: map[string]map[string]any{},
+		jobs:       map[string]map[string]any{},
+		browser:    normalizeBrowserBridgeOptions(options),
+		httpClient: &http.Client{},
 	}
 }
 
@@ -134,15 +209,7 @@ func (b *BuiltinBridgeProvider) Supports(tool string) bool {
 func (b *BuiltinBridgeProvider) Invoke(ctx context.Context, req Request) (any, error) {
 	switch req.Tool {
 	case "browser.request":
-		url := toString(req.Input["url"], "")
-		method := strings.ToUpper(toString(req.Input["method"], "GET"))
-		return map[string]any{
-			"status":   200,
-			"ok":       true,
-			"url":      url,
-			"method":   method,
-			"response": "bridge request accepted",
-		}, nil
+		return b.handleBrowserRequest(ctx, req.Input)
 	case "browser.open":
 		url := toString(req.Input["url"], "")
 		return map[string]any{
@@ -313,7 +380,7 @@ func (b *BuiltinBridgeProvider) Invoke(ctx context.Context, req Request) (any, e
 func (b *BuiltinBridgeProvider) Catalog() []ToolSpec {
 	return []ToolSpec{
 		{Tool: "browser.open", Provider: b.Name(), Description: "Open browser URL through bridge runtime"},
-		{Tool: "browser.request", Provider: b.Name(), Description: "Send browser bridge HTTP-like request"},
+		{Tool: "browser.request", Provider: b.Name(), Description: "Send browser bridge request or completion payload"},
 		{Tool: "exec.run", Provider: b.Name(), Description: "Execute local process command with timeout"},
 		{Tool: "file.patch", Provider: b.Name(), Description: "Apply text replacement patch to file"},
 		{Tool: "file.read", Provider: b.Name(), Description: "Read local file content"},
@@ -323,6 +390,263 @@ func (b *BuiltinBridgeProvider) Catalog() []ToolSpec {
 		{Tool: "task.background.poll", Provider: b.Name(), Description: "Poll background task state"},
 		{Tool: "task.background.start", Provider: b.Name(), Description: "Start background task execution"},
 		{Tool: "tool.echo", Provider: b.Name(), Description: "Echo request payload for smoke validation"},
+	}
+}
+
+func (b *BuiltinBridgeProvider) handleBrowserRequest(ctx context.Context, input map[string]any) (any, error) {
+	payload, hasCompletionPayload := toBrowserCompletionPayload(input)
+	if !hasCompletionPayload {
+		url := toString(input["url"], "")
+		method := strings.ToUpper(toString(input["method"], "GET"))
+		return map[string]any{
+			"status":   200,
+			"ok":       true,
+			"url":      url,
+			"method":   method,
+			"response": "bridge request accepted",
+		}, nil
+	}
+	if !b.browser.Enabled {
+		return nil, errors.New("browser bridge is disabled")
+	}
+	return b.invokeBrowserCompletion(ctx, payload)
+}
+
+func toBrowserCompletionPayload(input map[string]any) (map[string]any, bool) {
+	model := toString(input["model"], "gpt-5.2")
+	messages := normalizeCompletionMessages(input["messages"])
+	if len(messages) == 0 {
+		prompt := toString(input["prompt"], toString(input["message"], toString(input["text"], "")))
+		if prompt != "" {
+			messages = []map[string]any{
+				{"role": "user", "content": prompt},
+			}
+		}
+	}
+	if len(messages) == 0 {
+		return nil, false
+	}
+
+	payload := map[string]any{
+		"model":    model,
+		"messages": messages,
+	}
+	if value, ok := input["temperature"]; ok {
+		payload["temperature"] = value
+	}
+	if value, ok := input["max_tokens"]; ok {
+		payload["max_tokens"] = value
+	}
+	return payload, true
+}
+
+func normalizeCompletionMessages(raw any) []map[string]any {
+	switch value := raw.(type) {
+	case []map[string]any:
+		out := make([]map[string]any, 0, len(value))
+		for _, entry := range value {
+			role := strings.ToLower(toString(entry["role"], ""))
+			if role == "" {
+				continue
+			}
+			content := toString(entry["content"], "")
+			if content == "" {
+				continue
+			}
+			out = append(out, map[string]any{
+				"role":    role,
+				"content": content,
+			})
+		}
+		return out
+	case []any:
+		out := make([]map[string]any, 0, len(value))
+		for _, item := range value {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			role := strings.ToLower(toString(entry["role"], ""))
+			if role == "" {
+				continue
+			}
+			content := toString(entry["content"], "")
+			if content == "" {
+				continue
+			}
+			out = append(out, map[string]any{
+				"role":    role,
+				"content": content,
+			})
+		}
+		return out
+	default:
+		return []map[string]any{}
+	}
+}
+
+type bridgeHTTPError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *bridgeHTTPError) Error() string {
+	return fmt.Sprintf("bridge HTTP %d: %s", e.StatusCode, e.Body)
+}
+
+func (e *bridgeHTTPError) Retryable() bool {
+	return e.StatusCode == http.StatusTooManyRequests || e.StatusCode == http.StatusRequestTimeout || e.StatusCode >= 500
+}
+
+func (b *BuiltinBridgeProvider) invokeBrowserCompletion(ctx context.Context, payload map[string]any) (any, error) {
+	if strings.TrimSpace(b.browser.Endpoint) == "" {
+		return nil, errors.New("browser bridge endpoint is empty")
+	}
+	if allowed, wait := b.allowBridgeRequest(); !allowed {
+		return nil, fmt.Errorf("browser bridge circuit breaker open (retry in %s)", wait.Round(time.Millisecond).String())
+	}
+
+	lastErr := error(nil)
+	maxAttempts := b.browser.Retries + 1
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		response, statusCode, err := b.postBridgeCompletion(ctx, payload)
+		if err == nil {
+			assistant := extractAssistantMessage(response)
+			b.recordBridgeSuccess()
+			return map[string]any{
+				"status":        200,
+				"ok":            true,
+				"provider":      "chatgpt-browser-bridge",
+				"bridgeStatus":  statusCode,
+				"attempt":       attempt,
+				"model":         toString(response["model"], toString(payload["model"], "gpt-5.2")),
+				"assistantText": assistant,
+				"response":      response,
+			}, nil
+		}
+
+		lastErr = err
+		retryable := true
+		var httpErr *bridgeHTTPError
+		if errors.As(err, &httpErr) {
+			retryable = httpErr.Retryable()
+		}
+		if !retryable || attempt >= maxAttempts {
+			break
+		}
+
+		backoff := b.browser.RetryBackoff * time.Duration(attempt)
+		if backoff <= 0 {
+			continue
+		}
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+
+	b.recordBridgeFailure()
+	return nil, fmt.Errorf("browser bridge completion failed after %d attempts: %w", maxAttempts, lastErr)
+}
+
+func (b *BuiltinBridgeProvider) postBridgeCompletion(ctx context.Context, payload map[string]any) (map[string]any, int, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	endpoint := strings.TrimRight(strings.TrimSpace(b.browser.Endpoint), "/") + "/v1/chat/completions"
+	reqCtx, cancel := context.WithTimeout(ctx, b.browser.RequestTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, resp.StatusCode, &bridgeHTTPError{
+			StatusCode: resp.StatusCode,
+			Body:       truncateBridgeBody(string(raw), 2048),
+		}
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("bridge returned invalid JSON: %w", err)
+	}
+	return parsed, resp.StatusCode, nil
+}
+
+func extractAssistantMessage(response map[string]any) string {
+	rawChoices, ok := response["choices"].([]any)
+	if !ok || len(rawChoices) == 0 {
+		return ""
+	}
+	first, ok := rawChoices[0].(map[string]any)
+	if !ok {
+		return ""
+	}
+	if message, ok := first["message"].(map[string]any); ok {
+		text := toString(message["content"], "")
+		if text != "" {
+			return text
+		}
+	}
+	return toString(first["text"], "")
+}
+
+func truncateBridgeBody(raw string, maxLen int) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "<empty>"
+	}
+	if len(trimmed) <= maxLen {
+		return trimmed
+	}
+	return trimmed[:maxLen] + "..."
+}
+
+func (b *BuiltinBridgeProvider) allowBridgeRequest() (bool, time.Duration) {
+	now := time.Now().UTC()
+	b.circuitLocker.Lock()
+	defer b.circuitLocker.Unlock()
+	if now.Before(b.openUntil) {
+		return false, b.openUntil.Sub(now)
+	}
+	return true, 0
+}
+
+func (b *BuiltinBridgeProvider) recordBridgeSuccess() {
+	b.circuitLocker.Lock()
+	b.failures = 0
+	b.openUntil = time.Time{}
+	b.circuitLocker.Unlock()
+}
+
+func (b *BuiltinBridgeProvider) recordBridgeFailure() {
+	now := time.Now().UTC()
+	b.circuitLocker.Lock()
+	defer b.circuitLocker.Unlock()
+	b.failures++
+	if b.failures >= b.browser.CircuitFailThreshold {
+		b.openUntil = now.Add(b.browser.CircuitCooldown)
+		b.failures = 0
 	}
 }
 

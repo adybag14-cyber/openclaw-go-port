@@ -2,9 +2,13 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -169,11 +173,185 @@ func TestBackgroundTaskStartAndPoll(t *testing.T) {
 	}
 }
 
+func TestBrowserRequestCompletionUsesBridgeEndpoint(t *testing.T) {
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request payload failed: %v", err)
+		}
+		if payload["model"] != "gpt-5.2" {
+			t.Fatalf("unexpected model: %v", payload["model"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cmpl-1","model":"gpt-5.2","choices":[{"message":{"role":"assistant","content":"bridge-response"}}]}`))
+	}))
+	defer bridge.Close()
+
+	rt := NewDefaultWithOptions(RuntimeOptions{
+		BrowserBridge: BrowserBridgeOptions{
+			Enabled:              true,
+			Endpoint:             bridge.URL,
+			RequestTimeout:       3 * time.Second,
+			Retries:              0,
+			RetryBackoff:         0,
+			CircuitFailThreshold: 3,
+			CircuitCooldown:      3 * time.Second,
+		},
+	})
+
+	result, err := rt.Invoke(context.Background(), Request{
+		Tool: "browser.request",
+		Input: map[string]any{
+			"model": "gpt-5.2",
+			"messages": []map[string]any{
+				{"role": "user", "content": "hello"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("browser.request completion invoke failed: %v", err)
+	}
+
+	output, ok := result.Output.(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected output type: %T", result.Output)
+	}
+	if output["status"] != 200 {
+		t.Fatalf("unexpected status output: %v", output["status"])
+	}
+	if output["assistantText"] != "bridge-response" {
+		t.Fatalf("unexpected assistant text: %v", output["assistantText"])
+	}
+}
+
+func TestBrowserRequestCompletionRetriesThenSucceeds(t *testing.T) {
+	var attempts atomic.Int32
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := attempts.Add(1)
+		if count < 3 {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":"upstream unavailable"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cmpl-2","model":"gpt-5.2","choices":[{"message":{"role":"assistant","content":"recovered"}}]}`))
+	}))
+	defer bridge.Close()
+
+	rt := NewDefaultWithOptions(RuntimeOptions{
+		BrowserBridge: BrowserBridgeOptions{
+			Enabled:              true,
+			Endpoint:             bridge.URL,
+			RequestTimeout:       2 * time.Second,
+			Retries:              2,
+			RetryBackoff:         10 * time.Millisecond,
+			CircuitFailThreshold: 3,
+			CircuitCooldown:      2 * time.Second,
+		},
+	})
+
+	result, err := rt.Invoke(context.Background(), Request{
+		Tool: "browser.request",
+		Input: map[string]any{
+			"model": "gpt-5.2",
+			"messages": []map[string]any{
+				{"role": "user", "content": "retry please"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("browser.request retry invoke failed: %v", err)
+	}
+	output, _ := result.Output.(map[string]any)
+	if output["assistantText"] != "recovered" {
+		t.Fatalf("unexpected assistant text after retries: %v", output["assistantText"])
+	}
+	if output["attempt"] != 3 {
+		t.Fatalf("expected attempt=3 after retries, got %v", output["attempt"])
+	}
+	if attempts.Load() != 3 {
+		t.Fatalf("expected bridge to receive 3 requests, got %d", attempts.Load())
+	}
+}
+
+func TestBrowserRequestCircuitBreakerOpens(t *testing.T) {
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"busy"}`))
+	}))
+	defer bridge.Close()
+
+	rt := NewDefaultWithOptions(RuntimeOptions{
+		BrowserBridge: BrowserBridgeOptions{
+			Enabled:              true,
+			Endpoint:             bridge.URL,
+			RequestTimeout:       2 * time.Second,
+			Retries:              0,
+			RetryBackoff:         0,
+			CircuitFailThreshold: 2,
+			CircuitCooldown:      30 * time.Second,
+		},
+	})
+
+	input := map[string]any{
+		"messages": []map[string]any{
+			{"role": "user", "content": "hello"},
+		},
+	}
+
+	_, err := rt.Invoke(context.Background(), Request{Tool: "browser.request", Input: input})
+	if err == nil {
+		t.Fatalf("expected first bridge call to fail")
+	}
+	_, err = rt.Invoke(context.Background(), Request{Tool: "browser.request", Input: input})
+	if err == nil {
+		t.Fatalf("expected second bridge call to fail")
+	}
+	_, err = rt.Invoke(context.Background(), Request{Tool: "browser.request", Input: input})
+	if err == nil {
+		t.Fatalf("expected third bridge call to fail with open circuit")
+	}
+	if !strings.Contains(err.Error(), "circuit breaker open") {
+		t.Fatalf("expected circuit breaker error, got: %v", err)
+	}
+}
+
+func TestBrowserRequestDisabledBridgeFailsCompletionPayload(t *testing.T) {
+	rt := NewDefaultWithOptions(RuntimeOptions{
+		BrowserBridge: BrowserBridgeOptions{
+			Enabled:              false,
+			Endpoint:             "http://127.0.0.1:1",
+			RequestTimeout:       2 * time.Second,
+			Retries:              0,
+			RetryBackoff:         0,
+			CircuitFailThreshold: 2,
+			CircuitCooldown:      2 * time.Second,
+		},
+	})
+	_, err := rt.Invoke(context.Background(), Request{
+		Tool: "browser.request",
+		Input: map[string]any{
+			"messages": []map[string]any{
+				{"role": "user", "content": "hi"},
+			},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "browser bridge is disabled") {
+		t.Fatalf("expected disabled bridge error, got: %v", err)
+	}
+}
+
 func shellCommand() string {
 	if runtime.GOOS == "windows" {
 		return "cmd"
 	}
-	return "sh"
+	return "/bin/sh"
 }
 
 func shellArgs(script string) []any {

@@ -26,6 +26,21 @@ func TestLoadDefaultsWhenConfigMissing(t *testing.T) {
 	if cfg.Runtime.Profile != defaultProfile {
 		t.Fatalf("unexpected default runtime.profile: %s", cfg.Runtime.Profile)
 	}
+	if !cfg.Runtime.BrowserBridge.Enabled {
+		t.Fatalf("expected default runtime.browser_bridge.enabled=true")
+	}
+	if cfg.Runtime.BrowserBridge.Endpoint != defaultBrowserBridgeEndpoint {
+		t.Fatalf("unexpected default runtime.browser_bridge.endpoint: %s", cfg.Runtime.BrowserBridge.Endpoint)
+	}
+	if cfg.Runtime.BrowserBridge.RequestTimeoutMs != defaultBrowserBridgeRequestTimeoutMs {
+		t.Fatalf("unexpected default runtime.browser_bridge.request_timeout_ms: %d", cfg.Runtime.BrowserBridge.RequestTimeoutMs)
+	}
+	if cfg.Runtime.BrowserBridge.Retries != defaultBrowserBridgeRetries {
+		t.Fatalf("unexpected default runtime.browser_bridge.retries: %d", cfg.Runtime.BrowserBridge.Retries)
+	}
+	if cfg.Runtime.BrowserBridge.CircuitFailThreshold != defaultBrowserBridgeCircuitFailures {
+		t.Fatalf("unexpected default runtime.browser_bridge.circuit_fail_threshold: %d", cfg.Runtime.BrowserBridge.CircuitFailThreshold)
+	}
 	if cfg.Security.DefaultAction != "allow" {
 		t.Fatalf("unexpected default security.default_action: %s", cfg.Security.DefaultAction)
 	}
@@ -80,6 +95,13 @@ policy_bundle_path = "tmp/policy-bundle.json"
 	t.Setenv("OPENCLAW_GO_STATE_PATH", "tmp/override-state.json")
 	t.Setenv("OPENCLAW_GO_TELEGRAM_BOT_TOKEN", "tg-token")
 	t.Setenv("OPENCLAW_GO_POLICY_BUNDLE_PATH", "tmp/policy-from-env.json")
+	t.Setenv("OPENCLAW_GO_BROWSER_BRIDGE_ENABLED", "false")
+	t.Setenv("OPENCLAW_GO_BROWSER_BRIDGE_ENDPOINT", "http://127.0.0.1:43011")
+	t.Setenv("OPENCLAW_GO_BROWSER_BRIDGE_REQUEST_TIMEOUT_MS", "120000")
+	t.Setenv("OPENCLAW_GO_BROWSER_BRIDGE_RETRIES", "4")
+	t.Setenv("OPENCLAW_GO_BROWSER_BRIDGE_RETRY_BACKOFF_MS", "50")
+	t.Setenv("OPENCLAW_GO_BROWSER_BRIDGE_CIRCUIT_FAIL_THRESHOLD", "6")
+	t.Setenv("OPENCLAW_GO_BROWSER_BRIDGE_CIRCUIT_COOLDOWN_MS", "9000")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -103,6 +125,27 @@ policy_bundle_path = "tmp/policy-bundle.json"
 	}
 	if cfg.Runtime.Profile != "edge" {
 		t.Fatalf("runtime.profile expected edge, got %s", cfg.Runtime.Profile)
+	}
+	if cfg.Runtime.BrowserBridge.Enabled {
+		t.Fatalf("browser bridge enabled env override should be false")
+	}
+	if cfg.Runtime.BrowserBridge.Endpoint != "http://127.0.0.1:43011" {
+		t.Fatalf("browser bridge endpoint override not applied: %s", cfg.Runtime.BrowserBridge.Endpoint)
+	}
+	if cfg.Runtime.BrowserBridge.RequestTimeoutMs != 120000 {
+		t.Fatalf("browser bridge timeout override not applied: %d", cfg.Runtime.BrowserBridge.RequestTimeoutMs)
+	}
+	if cfg.Runtime.BrowserBridge.Retries != 4 {
+		t.Fatalf("browser bridge retries override not applied: %d", cfg.Runtime.BrowserBridge.Retries)
+	}
+	if cfg.Runtime.BrowserBridge.RetryBackoffMs != 50 {
+		t.Fatalf("browser bridge retry backoff override not applied: %d", cfg.Runtime.BrowserBridge.RetryBackoffMs)
+	}
+	if cfg.Runtime.BrowserBridge.CircuitFailThreshold != 6 {
+		t.Fatalf("browser bridge fail threshold override not applied: %d", cfg.Runtime.BrowserBridge.CircuitFailThreshold)
+	}
+	if cfg.Runtime.BrowserBridge.CircuitCooldownMs != 9000 {
+		t.Fatalf("browser bridge cooldown override not applied: %d", cfg.Runtime.BrowserBridge.CircuitCooldownMs)
 	}
 	if cfg.Channels.Telegram.BotToken != "tg-token" {
 		t.Fatalf("telegram token env override not applied")
@@ -151,5 +194,23 @@ risk_block_threshold = 70
 	_, err := Load(path)
 	if err == nil {
 		t.Fatalf("expected security threshold validation error")
+	}
+}
+
+func TestBrowserBridgeValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "openclaw-go.toml")
+	content := `
+[runtime.browser_bridge]
+enabled = true
+endpoint = ""
+request_timeout_ms = 0
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed writing test config: %v", err)
+	}
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatalf("expected browser bridge validation error")
 	}
 }

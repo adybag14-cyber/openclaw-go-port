@@ -200,3 +200,20 @@
 - Removed only the non-parity advertised extra (`security.audit`) from Go method registry while keeping runtime handler availability for diagnostics.
 - Added hard dispatch parity gate in gateway tests ensuring all advertised methods resolve without `-32601`.
 - Revalidated Dockerized Go matrix (`gofmt`, `go test ./...`, `go vet ./...`) and method-surface diff (`missing=0`, `extra=0`).
+
+### v2.0 Program Phase 3 Slice: Browser Bridge Runtime Hardening
+
+- Added configurable browser bridge runtime controls under `runtime.browser_bridge`:
+  - `enabled`, `endpoint`, `request_timeout_ms`, `retries`, `retry_backoff_ms`, `circuit_fail_threshold`, `circuit_cooldown_ms`.
+  - Environment overrides for all browser-bridge settings.
+- Upgraded Go tool runtime browser path:
+  - `browser.request` now detects chat-completion payloads (`messages` or prompt/message text) and calls the local browser bridge `/v1/chat/completions`.
+  - Added retry/backoff handling and circuit-breaker protection for bridge instability.
+  - Preserved legacy compatibility for URL/method probe-style `browser.request` calls.
+- Added tests:
+  - Runtime tests for bridge completion success, retry recovery, circuit-breaker open behavior, and disabled-bridge validation.
+  - Gateway integration test validating end-to-end `web.login.start -> auth.oauth.complete -> browser.request -> agent.wait` with a real assistant response payload.
+- Validation completed (Dockerized Go toolchain):
+  - `gofmt -w ./cmd ./internal`
+  - `go test ./...`
+  - `go vet ./...`

@@ -230,6 +230,99 @@ func TestWebLoginAndBrowserBridgeFlow(t *testing.T) {
 	}
 }
 
+func TestWebLoginAndBrowserCompletionBridgeFlow(t *testing.T) {
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected bridge request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cmpl-go-1","model":"gpt-5.2","choices":[{"message":{"role":"assistant","content":"bridge says hello"}}]}`))
+	}))
+	defer bridge.Close()
+
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-browser-completion"
+	cfg.Runtime.BrowserBridge.Enabled = true
+	cfg.Runtime.BrowserBridge.Endpoint = bridge.URL
+	cfg.Runtime.BrowserBridge.RequestTimeoutMs = 3000
+	cfg.Runtime.BrowserBridge.Retries = 0
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	start := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "wl-start-completion",
+		"method": "web.login.start",
+		"params": map[string]any{
+			"provider": "chatgpt",
+			"model":    "gpt-5.2",
+		},
+	})
+	startResult := assertRPCResult(t, start)
+	loginObj, _ := startResult["login"].(map[string]any)
+	loginID, _ := loginObj["loginSessionId"].(string)
+	loginCode, _ := loginObj["code"].(string)
+
+	complete := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "oauth-complete-completion",
+		"method": "auth.oauth.complete",
+		"params": map[string]any{
+			"loginSessionId": loginID,
+			"code":           loginCode,
+		},
+	})
+	completeResult := assertRPCResult(t, complete)
+	completeLogin, _ := completeResult["login"].(map[string]any)
+	if completeLogin["status"] != "authorized" {
+		t.Fatalf("expected authorized login status, got %v", completeLogin["status"])
+	}
+
+	browserReq := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "browser-completion-req",
+		"method": "browser.request",
+		"params": map[string]any{
+			"model": "gpt-5.2",
+			"messages": []map[string]any{
+				{"role": "user", "content": "hello from go"},
+			},
+		},
+	})
+	browserResult := assertRPCResult(t, browserReq)
+	jobID, _ := browserResult["jobId"].(string)
+	if jobID == "" {
+		t.Fatalf("browser.request completion should return queued jobId")
+	}
+
+	waitJob := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "agent-wait-completion",
+		"method": "agent.wait",
+		"params": map[string]any{
+			"jobId":     jobID,
+			"timeoutMs": 3000,
+		},
+	})
+	waitJobResult := assertRPCResult(t, waitJob)
+	done, _ := waitJobResult["done"].(bool)
+	if !done {
+		t.Fatalf("expected completion browser job to complete")
+	}
+	result, _ := waitJobResult["result"].(map[string]any)
+	outputWrap, _ := result["output"].(map[string]any)
+	if outputWrap["status"] != float64(200) {
+		t.Fatalf("expected completion browser output status 200, got %v", outputWrap["status"])
+	}
+	if outputWrap["assistantText"] != "bridge says hello" {
+		t.Fatalf("unexpected completion assistant text: %v", outputWrap["assistantText"])
+	}
+}
+
 func TestChannelsSendAndHistoryFlow(t *testing.T) {
 	cfg := config.Default()
 	cfg.Runtime.StatePath = "memory://test-channels"
