@@ -14,6 +14,7 @@ const (
 	defaultHTTPBind    = "127.0.0.1:8766"
 	defaultAuthMode    = "auto"
 	defaultStatePath   = "memory://openclaw-go-state"
+	defaultProfile     = "core"
 )
 
 type Config struct {
@@ -39,6 +40,7 @@ type GatewayServerConfig struct {
 type RuntimeConfig struct {
 	AuditOnly bool   `toml:"audit_only"`
 	StatePath string `toml:"state_path"`
+	Profile   string `toml:"profile"`
 }
 
 type ChannelsConfig struct {
@@ -74,6 +76,7 @@ func Default() Config {
 		Runtime: RuntimeConfig{
 			AuditOnly: false,
 			StatePath: defaultStatePath,
+			Profile:   defaultProfile,
 		},
 		Channels: ChannelsConfig{
 			Telegram: TelegramChannelConfig{
@@ -140,6 +143,7 @@ func applyEnvOverrides(cfg *Config) {
 	setIfPresent("OPENCLAW_GO_HTTP_BIND", &cfg.Gateway.Server.HTTPBind)
 	setIfPresent("OPENCLAW_GO_GATEWAY_AUTH_MODE", &cfg.Gateway.Server.AuthMode)
 	setIfPresent("OPENCLAW_GO_STATE_PATH", &cfg.Runtime.StatePath)
+	setIfPresent("OPENCLAW_GO_RUNTIME_PROFILE", &cfg.Runtime.Profile)
 	setIfPresent("OPENCLAW_GO_TELEGRAM_BOT_TOKEN", &cfg.Channels.Telegram.BotToken)
 	setIfPresent("OPENCLAW_GO_TELEGRAM_DEFAULT_TARGET", &cfg.Channels.Telegram.DefaultTarget)
 	setIfPresent("OPENCLAW_GO_POLICY_BUNDLE_PATH", &cfg.Security.PolicyBundlePath)
@@ -169,6 +173,14 @@ func validate(cfg Config) error {
 	}
 	if strings.TrimSpace(cfg.Runtime.StatePath) == "" {
 		return errors.New("runtime.state_path cannot be empty")
+	}
+	if strings.TrimSpace(cfg.Runtime.Profile) == "" {
+		return errors.New("runtime.profile cannot be empty")
+	}
+	switch strings.ToLower(strings.TrimSpace(cfg.Runtime.Profile)) {
+	case "core", "edge":
+	default:
+		return errors.New("runtime.profile must be one of: core, edge")
 	}
 	if strings.TrimSpace(cfg.Security.DefaultAction) == "" {
 		return errors.New("security.default_action cannot be empty")

@@ -89,6 +89,7 @@ var defaultSupportedRPCMethods = []string{
 	"health",
 	"status",
 	"doctor.memory.status",
+	"security.audit",
 	"usage.status",
 	"usage.cost",
 	"last-heartbeat",

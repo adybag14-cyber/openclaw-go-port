@@ -23,6 +23,9 @@ func TestLoadDefaultsWhenConfigMissing(t *testing.T) {
 	if cfg.Runtime.StatePath != defaultStatePath {
 		t.Fatalf("unexpected default runtime.state_path: %s", cfg.Runtime.StatePath)
 	}
+	if cfg.Runtime.Profile != defaultProfile {
+		t.Fatalf("unexpected default runtime.profile: %s", cfg.Runtime.Profile)
+	}
 	if cfg.Security.DefaultAction != "allow" {
 		t.Fatalf("unexpected default security.default_action: %s", cfg.Security.DefaultAction)
 	}
@@ -49,6 +52,7 @@ auth_mode = "token"
 [runtime]
 audit_only = true
 state_path = "tmp/openclaw-go-state.json"
+profile = "edge"
 
 [security]
 default_action = "review"
@@ -85,6 +89,9 @@ policy_bundle_path = "tmp/policy-bundle.json"
 	if cfg.Runtime.StatePath != "tmp/override-state.json" {
 		t.Fatalf("runtime.state_path override not applied: %s", cfg.Runtime.StatePath)
 	}
+	if cfg.Runtime.Profile != "edge" {
+		t.Fatalf("runtime.profile expected edge, got %s", cfg.Runtime.Profile)
+	}
 	if cfg.Channels.Telegram.BotToken != "tg-token" {
 		t.Fatalf("telegram token env override not applied")
 	}
@@ -99,5 +106,21 @@ policy_bundle_path = "tmp/policy-bundle.json"
 	}
 	if cfg.Security.CredentialLeakAction != "review" {
 		t.Fatalf("security.credential_leak_action expected review")
+	}
+}
+
+func TestRuntimeProfileValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "openclaw-go.toml")
+	content := `
+[runtime]
+profile = "invalid"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed writing test config: %v", err)
+	}
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatalf("expected runtime.profile validation error")
 	}
 }

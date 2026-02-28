@@ -18,8 +18,10 @@ import (
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/protocol"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/routines"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/rpc"
+	agentruntime "github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/runtime"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/scheduler"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/security"
+	securityaudit "github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/security/audit"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/state"
 	toolruntime "github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/tools/runtime"
 	wasmruntime "github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/wasm/runtime"
@@ -36,6 +38,7 @@ type Server struct {
 	tools     *toolruntime.Runtime
 	channels  *channels.Registry
 	memory    *memory.Store
+	runtime   *agentruntime.Runtime
 	state     *state.Store
 	guard     *security.Guard
 	routines  *routines.Manager
@@ -53,6 +56,7 @@ func New(cfg config.Config, build buildinfo.Info) *Server {
 		tools:     toolruntime.NewDefault(),
 		channels:  channels.NewRegistry(cfg.Channels.Telegram.BotToken, cfg.Channels.Telegram.DefaultTarget),
 		memory:    memory.NewStore(cfg.Runtime.StatePath, 10_000),
+		runtime:   agentruntime.New(cfg.Runtime),
 		state:     state.NewStore(),
 		guard: security.NewGuard(security.GuardConfig{
 			PolicyBundlePath:        cfg.Security.PolicyBundlePath,
@@ -215,6 +219,8 @@ func (s *Server) dispatchRPC(ctx context.Context, requestID string, canonical st
 		return s.statusPayload(), nil
 	case "config.get":
 		return s.handleConfigGet(), nil
+	case "security.audit":
+		return s.handleSecurityAudit(params), nil
 	case "connect":
 		return s.handleConnect(params)
 	case "sessions.list":
@@ -306,9 +312,7 @@ func (s *Server) handleConfigGet() map[string]any {
 			"url":      s.cfg.Gateway.URL,
 			"authMode": s.resolveAuthMode(),
 		},
-		"runtime": map[string]any{
-			"statePath": s.cfg.Runtime.StatePath,
-		},
+		"runtime": s.runtime.Snapshot(),
 		"channels": map[string]any{
 			"telegramConfigured": strings.TrimSpace(s.cfg.Channels.Telegram.BotToken) != "",
 		},
@@ -322,6 +326,15 @@ func (s *Server) handleConfigGet() map[string]any {
 			"modules": s.wasm.MarketplaceList(),
 			"policy":  s.wasm.Policy(),
 		},
+	}
+}
+
+func (s *Server) handleSecurityAudit(params map[string]any) map[string]any {
+	report := securityaudit.Run(s.cfg, securityaudit.Options{
+		Deep: toBool(params["deep"], false),
+	})
+	return map[string]any{
+		"report": report,
 	}
 }
 
@@ -881,6 +894,7 @@ func (s *Server) statusPayload() map[string]any {
 			"count":     s.memory.Count(),
 			"lastError": s.memory.LastError(),
 		},
+		"runtime": s.runtime.Snapshot(),
 		"state": map[string]any{
 			"sessions": s.state.List(),
 		},
@@ -1030,6 +1044,22 @@ func toFloat(v any, fallback float64) float64 {
 	default:
 		return fallback
 	}
+}
+
+func toBool(v any, fallback bool) bool {
+	switch value := v.(type) {
+	case bool:
+		return value
+	case string:
+		normalized := strings.ToLower(strings.TrimSpace(value))
+		if normalized == "true" || normalized == "1" || normalized == "yes" {
+			return true
+		}
+		if normalized == "false" || normalized == "0" || normalized == "no" {
+			return false
+		}
+	}
+	return fallback
 }
 
 func asSlice(v any) []float64 {

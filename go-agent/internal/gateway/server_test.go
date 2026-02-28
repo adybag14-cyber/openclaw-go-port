@@ -434,6 +434,56 @@ func TestSecurityCredentialAndTelemetryPolicies(t *testing.T) {
 	_ = assertRPCResult(t, reviewAllowed)
 }
 
+func TestSecurityAuditAndRuntimeSnapshot(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-security-audit"
+	cfg.Runtime.AuditOnly = true
+	cfg.Runtime.Profile = "edge"
+	cfg.Gateway.Server.AuthMode = "none"
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	auditResp := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "security-audit",
+		"method": "security.audit",
+		"params": map[string]any{},
+	})
+	auditResult := assertRPCResult(t, auditResp)
+	report, ok := auditResult["report"].(map[string]any)
+	if !ok {
+		t.Fatalf("security.audit should return report payload")
+	}
+	summary, ok := report["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("security.audit report missing summary payload")
+	}
+	if critical, _ := summary["critical"].(float64); int(critical) < 1 {
+		t.Fatalf("security.audit expected critical findings for auth none")
+	}
+
+	cfgResp := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "config-get-runtime",
+		"method": "config.get",
+		"params": map[string]any{},
+	})
+	cfgResult := assertRPCResult(t, cfgResp)
+	runtimeObj, ok := cfgResult["runtime"].(map[string]any)
+	if !ok {
+		t.Fatalf("config.get should include runtime snapshot")
+	}
+	if runtimeObj["profile"] != "edge" {
+		t.Fatalf("expected runtime profile edge, got %v", runtimeObj["profile"])
+	}
+	if runtimeObj["mode"] != "audit-only" {
+		t.Fatalf("expected runtime mode audit-only, got %v", runtimeObj["mode"])
+	}
+}
+
 func TestEdgeWasmAndRoutinesPhase7Methods(t *testing.T) {
 	cfg := config.Default()
 	cfg.Runtime.StatePath = "memory://test-edge-phase7"

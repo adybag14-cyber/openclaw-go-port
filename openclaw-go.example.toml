@@ -1,0 +1,27 @@
+[gateway]
+url = "ws://127.0.0.1:8080/gateway"
+token = ""
+password = ""
+
+[gateway.server]
+bind = "127.0.0.1:8765"
+http_bind = "127.0.0.1:8766"
+auth_mode = "auto"
+
+[runtime]
+audit_only = false
+state_path = "memory://openclaw-go-state"
+profile = "core"
+
+[channels.telegram]
+bot_token = ""
+default_target = ""
+
+[security]
+policy_bundle_path = "memory://security-policy.json"
+default_action = "allow"
+telemetry_action = "review"
+credential_leak_action = "block"
+
+[security.tool_policies]
+# "browser.request" = "block"

@@ -167,3 +167,29 @@
   - `go mod tidy`
   - `go test ./...`
   - `go vet ./...`
+
+### Phase 8 Cutover Readiness + v1.0.0-go Delivered
+
+- Closed remaining parity modules:
+  - Added `internal/runtime` profile snapshot package (`core`/`edge`, audit/enforcing modes).
+  - Added `internal/session` session-key parser parity port.
+  - Added `internal/security/audit` package with summary findings + deep gateway probe.
+  - Added gateway `security.audit` RPC route and runtime snapshot integration in `status`/`config.get`.
+- Cross-platform build validation:
+  - Dockerized Windows build: `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ...`
+  - Dockerized Linux build: `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ...`
+  - Windows binary CLI smoke: `openclaw-go-windows-amd64.exe --help`
+  - Linux binary runtime smoke in container:
+    - `GET /health` returns `status=ok`, `version=v1.0.0-go`.
+- Oracle VM smoke validation (`ubuntu@144.21.61.111`):
+  - Uploaded Linux artifact via `scp`.
+  - Executed binary and verified:
+    - `GET /health` -> HTTP 200 with `status=ok`.
+    - `POST /rpc` (`status` method) -> HTTP 200 with valid RPC response payload.
+- Final parity sign-off:
+  - `docs/go-port/parity-matrix.md` now reflects `22/22` required modules complete.
+- Release packaging:
+  - Release artifact directory: `dist/release-v1.0.0-go/`
+  - Built artifacts:
+    - `openclaw-go-windows-amd64.exe`
+    - `openclaw-go-linux-amd64`

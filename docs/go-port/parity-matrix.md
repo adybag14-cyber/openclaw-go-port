@@ -4,32 +4,32 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 
 | Rust Module | Go Target Package | Status | Notes |
 | --- | --- | --- | --- |
-| `src/main.rs` | `go-agent/cmd/openclaw-go` | in-progress | CLI bootstrap started in phase 1 |
-| `src/config.rs` | `go-agent/internal/config` | in-progress | Minimal config + env overrides in phase 1 |
-| `src/gateway_server.rs` | `go-agent/internal/gateway` | in-progress | HTTP health endpoint + auth/connect/session lifecycle + scheduler-backed RPC plumbing |
+| `src/main.rs` | `go-agent/cmd/openclaw-go` | done | CLI bootstrap delivered with config/http-bind overrides and signal-safe runtime startup |
+| `src/config.rs` | `go-agent/internal/config` | done | TOML + env loading, runtime profile validation, and security defaults are complete |
+| `src/gateway_server.rs` | `go-agent/internal/gateway` | done | HTTP health/RPC server, auth/connect/session lifecycle, scheduler routing, and edge handlers shipped |
 | `src/protocol.rs` | `go-agent/internal/protocol` | done | Framing, method-family classification, rpc request/response/error helpers, fixture corpus tests |
-| `src/gateway.rs` | `go-agent/internal/rpc` + `internal/gateway` | in-progress | Method registry scaffold (supported list + canonical resolution), health/status/connect/session/tool routes wired |
-| `src/scheduler.rs` | `go-agent/internal/scheduler` | in-progress | Queue/worker primitives, job wait/status, scheduler stats integrated in gateway status |
-| `src/runtime.rs` | `go-agent/internal/runtime` | not-started | Depends on protocol + scheduler |
-| `src/tool_registry.rs` | `go-agent/internal/tools` | in-progress | `tools.catalog` runtime provider catalog scaffold |
-| `src/tool_runtime.rs` | `go-agent/internal/tools/runtime` | in-progress | Provider interface + builtin browser bridge runtime execution |
-| `src/telegram_bridge.rs` | `go-agent/internal/channels/telegram` | in-progress | Telegram channel driver scaffold with send/logout/status and alias mapping |
-| `src/channels/mod.rs` | `go-agent/internal/channels` | in-progress | Channel registry abstraction + `channels.status` and `channels.logout` wiring |
-| `src/memory.rs` | `go-agent/internal/memory` | in-progress | Message history store + chat/session history query surface |
-| `src/persistent_memory.rs` | `go-agent/internal/memory/persist` | in-progress | JSON persistence path support for memory store (`runtime.state_path`) |
-| `src/state.rs` | `go-agent/internal/state` | in-progress | Session state tracker (last channel/method/message counters) |
-| `src/session_key.rs` | `go-agent/internal/session` | not-started | Phase 5 target |
+| `src/gateway.rs` | `go-agent/internal/rpc` + `internal/gateway` | done | Canonical method registry and gateway dispatch parity surface delivered (`security.audit` included) |
+| `src/scheduler.rs` | `go-agent/internal/scheduler` | done | Queue/worker execution + `agent.wait` status contracts and scheduler metrics delivered |
+| `src/runtime.rs` | `go-agent/internal/runtime` | done | Runtime snapshot/profile model implemented (`core`/`edge`, `audit-only` vs enforcing mode) |
+| `src/tool_registry.rs` | `go-agent/internal/tools` | done | Tool catalog and runtime provider registry flow delivered |
+| `src/tool_runtime.rs` | `go-agent/internal/tools/runtime` | done | Runtime invoke path for browser bridge and agent/tool orchestration delivered |
+| `src/telegram_bridge.rs` | `go-agent/internal/channels/telegram` | done | Telegram channel driver send/status/logout semantics shipped |
+| `src/channels/mod.rs` | `go-agent/internal/channels` | done | Channel registry abstraction + canonical alias routing delivered |
+| `src/memory.rs` | `go-agent/internal/memory` | done | Message history storage and channel/session query surfaces delivered |
+| `src/persistent_memory.rs` | `go-agent/internal/memory/persist` | done | JSON-backed persistence via `runtime.state_path` delivered in store layer |
+| `src/state.rs` | `go-agent/internal/state` | done | Session state tracking and touch counters are integrated |
+| `src/session_key.rs` | `go-agent/internal/session` | done | Session-key descriptor parser ported with main/direct/group/channel/cron/hook/node coverage |
 | `src/security/*` | `go-agent/internal/security/*` | done | Policy guard parity includes bundle loading, telemetry high-risk handling, credential leak detection, and auth-handshake-safe enforcement |
-| `src/security_audit.rs` | `go-agent/internal/security/audit` | not-started | Phase 6 target |
+| `src/security_audit.rs` | `go-agent/internal/security/audit` | done | Security audit package delivered with summary findings and deep gateway probe support |
 | `src/routines.rs` | `go-agent/internal/routines` | done | Routine registry + deterministic execution contract + tests |
 | `src/wasm_runtime.rs` | `go-agent/internal/wasm/runtime` | done | WASM module marketplace + sandbox-gated execution + tests |
 | `src/wasm_sandbox.rs` | `go-agent/internal/wasm/sandbox` | done | Default sandbox policy + capability evaluation + tests |
-| `src/website_bridge.rs` | `go-agent/internal/bridge/web` | in-progress | Browser auth login manager (`start/wait/complete/logout`) integrated via RPC |
-| `src/bridge.rs` | `go-agent/internal/bridge` | in-progress | Bridge orchestration scaffold through gateway + scheduler + tool runtime |
+| `src/website_bridge.rs` | `go-agent/internal/bridge/web` | done | Browser auth login manager (`start/wait/complete/logout`) integrated and validated end-to-end |
+| `src/bridge.rs` | `go-agent/internal/bridge` | done | Bridge orchestration through gateway + scheduler + tool runtime is complete |
 
 ## Current Gap Summary
 
-- Completed: `5`
-- In-progress: `14`
-- Not-started: `3`
+- Completed: `22`
+- In-progress: `0`
+- Not-started: `0`
 - Deferred: `0`

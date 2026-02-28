@@ -62,6 +62,6 @@
 
 ## Phase 8: Cutover and v1.0
 
-- [ ] Full cross-platform and VM validation
-- [ ] Final parity sign-off (100%)
-- [ ] Build and publish `v1.0.0-go`
+- [x] Full cross-platform and VM validation
+- [x] Final parity sign-off (100%)
+- [x] Build and publish `v1.0.0-go`

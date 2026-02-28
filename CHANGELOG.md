@@ -5,6 +5,33 @@
 ### Highlights
 - No unreleased changes.
 
+## v1.0.0-go - 2026-02-28
+
+### Highlights
+- Completed phase-8 cutover for the Go runtime port and shipped `v1.0.0-go`.
+- Closed remaining Go parity modules:
+  - `internal/runtime`
+  - `internal/session`
+  - `internal/security/audit`
+- Added gateway support for `security.audit` and runtime profile snapshot exposure in `status`/`config.get`.
+- Finalized Go parity tracking with `22/22` required modules complete.
+- Built release artifacts for:
+  - Windows `amd64`
+  - Linux `amd64`
+
+### Validation
+- Dockerized Go matrix:
+  - `gofmt -w ./cmd ./internal`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go vet ./...`
+- Cross-platform build:
+  - `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ...`
+  - `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ...`
+- Oracle VM smoke (`ubuntu@144.21.61.111`):
+  - `GET /health` -> `HTTP 200`
+  - `POST /rpc` (`status`) -> valid RPC response
+
 ## v1.7.14 - 2026-02-28
 
 ### Highlights
