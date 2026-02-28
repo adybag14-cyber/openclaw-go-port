@@ -28,6 +28,14 @@ func TestRunDoctorOutputsDiagnosticsJSON(t *testing.T) {
 	if payload["securityAudit"] == nil {
 		t.Fatalf("doctor output should include securityAudit report")
 	}
+	doctor, ok := payload["doctor"].(map[string]any)
+	if !ok {
+		t.Fatalf("doctor output should include doctor object")
+	}
+	checks, ok := doctor["checks"].([]any)
+	if !ok || len(checks) == 0 {
+		t.Fatalf("doctor output should include diagnostic checks")
+	}
 }
 
 func TestRunListMethodsOutputsMethodCatalog(t *testing.T) {

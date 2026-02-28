@@ -2,6 +2,9 @@ package audit
 
 import (
 	"net"
+	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/config"
@@ -44,4 +47,103 @@ func TestRunWarnsWhenCredentialPolicyKeysMissing(t *testing.T) {
 	if report.Summary.Critical < 1 {
 		t.Fatalf("expected critical finding for missing credential keys")
 	}
+}
+
+func TestRunFlagsPublicGatewayBinds(t *testing.T) {
+	cfg := config.Default()
+	cfg.Gateway.Server.AuthMode = "token"
+	cfg.Gateway.Token = "secret"
+	cfg.Gateway.Server.Bind = "0.0.0.0:8765"
+	cfg.Gateway.Server.HTTPBind = "0.0.0.0:8766"
+
+	report := Run(cfg, Options{})
+	if !hasFinding(report, "gateway.bind.public") {
+		t.Fatalf("expected gateway.bind.public finding")
+	}
+	if !hasFinding(report, "gateway.http_bind.public") {
+		t.Fatalf("expected gateway.http_bind.public finding")
+	}
+}
+
+func TestRunDetectsInvalidPolicyBundleFile(t *testing.T) {
+	cfg := config.Default()
+	cfg.Security.PolicyBundlePath = filepath.Join(t.TempDir(), "policy.json")
+	if err := os.WriteFile(cfg.Security.PolicyBundlePath, []byte("{not-json"), 0o600); err != nil {
+		t.Fatalf("failed to write policy bundle fixture: %v", err)
+	}
+
+	report := Run(cfg, Options{})
+	if !hasFinding(report, "security.policy_bundle.parse_failed") {
+		t.Fatalf("expected security.policy_bundle.parse_failed finding")
+	}
+}
+
+func TestRunDeepBrowserBridgeProbe(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to bind local listener: %v", err)
+	}
+	defer listener.Close()
+
+	cfg := config.Default()
+	cfg.Runtime.BrowserBridge.Enabled = true
+	cfg.Runtime.BrowserBridge.Endpoint = "http://" + listener.Addr().String()
+
+	report := Run(cfg, Options{Deep: true})
+	if report.Deep == nil {
+		t.Fatalf("expected deep report")
+	}
+	if !report.Deep.BrowserBridge.OK {
+		t.Fatalf("expected deep browser bridge probe to pass, got error=%s", report.Deep.BrowserBridge.Error)
+	}
+}
+
+func TestRunParityCheckIDCorpus(t *testing.T) {
+	cfg := config.Default()
+	cfg.Gateway.Server.AuthMode = "none"
+	cfg.Gateway.Server.Bind = "0.0.0.0:8765"
+	cfg.Gateway.Server.HTTPBind = "0.0.0.0:8766"
+	cfg.Runtime.AuditOnly = true
+	cfg.Runtime.StatePath = "memory://state"
+	cfg.Runtime.BrowserBridge.Endpoint = "http://0.0.0.0:43010"
+	cfg.Security.PolicyBundlePath = filepath.Join(t.TempDir(), "missing-policy.json")
+	cfg.Security.LoopGuardEnabled = false
+	cfg.Security.RiskReviewThreshold = 20
+	cfg.Security.RiskBlockThreshold = 30
+
+	report := Run(cfg, Options{})
+	got := checkIDs(report)
+	want := []string{
+		"gateway.auth.none",
+		"gateway.bind.public",
+		"gateway.http_bind.public",
+		"runtime.audit_only.enabled",
+		"runtime.state_path.in_memory",
+		"runtime.browser_bridge.endpoint.public",
+		"security.loop_guard.disabled",
+		"security.risk_thresholds.permissive",
+		"security.policy_bundle.stat_failed",
+	}
+	for _, expected := range want {
+		if !slices.Contains(got, expected) {
+			t.Fatalf("expected parity check id %s in report ids=%v", expected, got)
+		}
+	}
+}
+
+func hasFinding(report Report, checkID string) bool {
+	for _, finding := range report.Findings {
+		if finding.CheckID == checkID {
+			return true
+		}
+	}
+	return false
+}
+
+func checkIDs(report Report) []string {
+	out := make([]string, 0, len(report.Findings))
+	for _, finding := range report.Findings {
+		out = append(out, finding.CheckID)
+	}
+	return out
 }

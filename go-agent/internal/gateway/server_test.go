@@ -695,6 +695,40 @@ func TestSecurityAuditAndRuntimeSnapshot(t *testing.T) {
 	}
 }
 
+func TestSecurityAuditDeepIncludesBridgeAndPolicyProbe(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-security-audit-deep"
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	auditResp := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "security-audit-deep",
+		"method": "security.audit",
+		"params": map[string]any{
+			"deep": true,
+		},
+	})
+	auditResult := assertRPCResult(t, auditResp)
+	report, ok := auditResult["report"].(map[string]any)
+	if !ok {
+		t.Fatalf("security.audit should return report payload")
+	}
+	deep, ok := report["deep"].(map[string]any)
+	if !ok {
+		t.Fatalf("security.audit deep report missing")
+	}
+	if _, ok := deep["browserBridge"].(map[string]any); !ok {
+		t.Fatalf("deep report should include browserBridge probe")
+	}
+	if _, ok := deep["policyBundle"].(map[string]any); !ok {
+		t.Fatalf("deep report should include policyBundle probe")
+	}
+}
+
 func TestEdgeWasmAndRoutinesPhase7Methods(t *testing.T) {
 	cfg := config.Default()
 	cfg.Runtime.StatePath = "memory://test-edge-phase7"

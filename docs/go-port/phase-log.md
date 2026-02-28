@@ -433,3 +433,44 @@
   - `gofmt -w ./cmd ./internal`
   - `go test ./...`
   - `go vet ./...`
+
+### Post-v2 Continuation (Issue #3) - Slice 4: Doctor + Security Audit Depth
+
+- Expanded Go security audit finding coverage to better match Rust depth posture:
+  - gateway exposure checks:
+    - `gateway.bind.public`
+    - `gateway.http_bind.public`
+  - runtime posture checks:
+    - `runtime.state_path.in_memory`
+    - `runtime.browser_bridge.endpoint.public`
+  - security posture checks:
+    - `security.loop_guard.disabled`
+    - `security.loop_guard.thresholds.invalid`
+    - `security.risk_thresholds.permissive`
+  - policy bundle validation checks:
+    - `security.policy_bundle.stat_failed`
+    - `security.policy_bundle.is_dir`
+    - `security.policy_bundle.read_failed`
+    - `security.policy_bundle.parse_failed`
+- Expanded deep audit report shape:
+  - `deep.gateway` probe (existing)
+  - `deep.browserBridge` probe (new)
+  - `deep.policyBundle` probe (new)
+- Added deep-probe surfaced findings:
+  - `browser_bridge.deep_probe`
+  - `security.policy_bundle.deep_probe`
+- Added parity corpus-style audit tests to lock deterministic check-id coverage for hardened/misconfigured profiles.
+- Expanded CLI doctor diagnostics payload with structured `doctor.checks`:
+  - auth secret readiness
+  - gateway bind scope
+  - browser bridge endpoint posture
+  - state path persistence posture
+  - policy bundle readiness
+  - loop guard + risk-threshold posture
+  - security audit summary projection
+  - deep probe status entries (when `--deep`)
+  - binary availability checks (`docker`, `wasmtime`)
+- Validation completed (Dockerized Go toolchain):
+  - `gofmt -w ./cmd ./internal`
+  - `go test ./...`
+  - `go vet ./...`

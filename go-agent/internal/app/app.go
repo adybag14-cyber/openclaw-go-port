@@ -80,6 +80,7 @@ func runDiagnostics(cfg config.Config, opts Options) error {
 		payload["doctor"] = map[string]any{
 			"healthy": report.Summary.Critical == 0,
 			"summary": report.Summary,
+			"checks":  buildDoctorChecks(cfg, report),
 		}
 	}
 
