@@ -2,10 +2,13 @@ package runtime
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/wasm/sandbox"
 )
+
+const wasmConst42MainBase64 = "AGFzbQEAAAABBQFgAAF/AwIBAAcIAQRtYWluAAAKBgEEAEEqCw=="
 
 func TestMarketplaceListDeterministicAndNonEmpty(t *testing.T) {
 	rt := NewRuntime()
@@ -114,5 +117,98 @@ func TestSetPolicyAllowsNetworkWhenEnabled(t *testing.T) {
 	_, err = rt.Execute(context.Background(), "wasm.net.echo", map[string]any{})
 	if err != nil {
 		t.Fatalf("expected policy override to allow network capability: %v", err)
+	}
+}
+
+func TestExecuteUsesWazeroWhenModuleBytesProvided(t *testing.T) {
+	rt := NewRuntime()
+	err := rt.InstallModule(Module{
+		ID:           "wasm.custom.const42",
+		Name:         "Const 42",
+		Version:      "1.0.0",
+		Capabilities: []string{"compute"},
+		EntryPoint:   "main",
+		WasmBase64:   wasmConst42MainBase64,
+	})
+	if err != nil {
+		t.Fatalf("install module failed: %v", err)
+	}
+
+	result, err := rt.Execute(context.Background(), "wasm.custom.const42", map[string]any{})
+	if err != nil {
+		t.Fatalf("execute module failed: %v", err)
+	}
+	if result["engine"] != "wazero" {
+		t.Fatalf("expected top-level engine wazero, got %v", result["engine"])
+	}
+	output, ok := result["output"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected output object, got %T", result["output"])
+	}
+	if output["engine"] != "wazero" {
+		t.Fatalf("expected output engine wazero, got %v", output["engine"])
+	}
+	switch value := output["result"].(type) {
+	case uint64:
+		if value != 42 {
+			t.Fatalf("expected wasm result 42, got %d", value)
+		}
+	case int:
+		if value != 42 {
+			t.Fatalf("expected wasm result 42, got %d", value)
+		}
+	default:
+		t.Fatalf("unexpected wasm result type/value: %T %v", output["result"], output["result"])
+	}
+}
+
+func TestInstallRejectsInvalidWasmBase64(t *testing.T) {
+	rt := NewRuntime()
+	err := rt.InstallModule(Module{
+		ID:           "wasm.invalid.encoding",
+		Capabilities: []string{"compute"},
+		WasmBase64:   "%%%not-base64%%%",
+	})
+	if err == nil {
+		t.Fatalf("expected invalid wasmBase64 install error")
+	}
+}
+
+func TestExecuteFailsWhenEntryPointMissingInCompiledModule(t *testing.T) {
+	rt := NewRuntime()
+	err := rt.InstallModule(Module{
+		ID:           "wasm.const.missing-fn",
+		Capabilities: []string{"compute"},
+		EntryPoint:   "missing_fn",
+		WasmBase64:   wasmConst42MainBase64,
+	})
+	if err != nil {
+		t.Fatalf("install module failed: %v", err)
+	}
+	_, err = rt.Execute(context.Background(), "wasm.const.missing-fn", map[string]any{})
+	if err == nil {
+		t.Fatalf("expected missing exported function error")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "exported function") {
+		t.Fatalf("unexpected error for missing exported function: %v", err)
+	}
+}
+
+func TestExecuteFailsWhenWasmArgsContainUnsupportedType(t *testing.T) {
+	rt := NewRuntime()
+	err := rt.InstallModule(Module{
+		ID:           "wasm.const.bad-args",
+		Capabilities: []string{"compute"},
+		EntryPoint:   "main",
+		WasmBase64:   wasmConst42MainBase64,
+	})
+	if err != nil {
+		t.Fatalf("install module failed: %v", err)
+	}
+	_, err = rt.Execute(context.Background(), "wasm.const.bad-args", map[string]any{
+		"args": []any{"bad"},
+	})
+	if err == nil {
+		t.Fatalf("expected error for unsupported wasm arg type")
 	}
 }

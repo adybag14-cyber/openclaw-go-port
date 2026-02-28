@@ -2,13 +2,16 @@ package runtime
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/wasm/sandbox"
+	"github.com/tetratelabs/wazero"
 )
 
 type Module struct {
@@ -19,6 +22,10 @@ type Module struct {
 	Capabilities []string `json:"capabilities"`
 	WIT          string   `json:"wit,omitempty"`
 	EntryPoint   string   `json:"entryPoint,omitempty"`
+	Engine       string   `json:"engine,omitempty"`
+	WasmBase64   string   `json:"wasmBase64,omitempty"`
+	WasmPath     string   `json:"wasmPath,omitempty"`
+	Binary       []byte   `json:"-"`
 }
 
 type Runtime struct {
@@ -106,7 +113,11 @@ func (r *Runtime) SetPolicy(policy sandbox.Policy) {
 	r.mu.Unlock()
 }
 
-func (r *Runtime) Execute(_ context.Context, moduleID string, input map[string]any) (map[string]any, error) {
+func (r *Runtime) Execute(ctx context.Context, moduleID string, input map[string]any) (map[string]any, error) {
+	return r.execute(ctx, moduleID, input)
+}
+
+func (r *Runtime) execute(ctx context.Context, moduleID string, input map[string]any) (map[string]any, error) {
 	id := strings.ToLower(strings.TrimSpace(moduleID))
 	r.mu.RLock()
 	module, ok := r.modules[id]
@@ -131,18 +142,31 @@ func (r *Runtime) Execute(_ context.Context, moduleID string, input map[string]a
 		return nil, fmt.Errorf("sandbox denied module %s: %s", module.ID, decision.Reason)
 	}
 
+	var output map[string]any
+	var err error
+	if len(module.Binary) > 0 {
+		output, err = executeCompiledModule(ctx, module, input, timeoutMs)
+		if err != nil {
+			return nil, fmt.Errorf("wasm module %s execution failed: %w", module.ID, err)
+		}
+	} else {
+		output = map[string]any{
+			"engine": "synthetic",
+			"echo":   input,
+		}
+	}
+
 	return map[string]any{
 		"module":    module.ID,
 		"status":    "completed",
 		"startedAt": time.Now().UTC().Format(time.RFC3339),
+		"engine":    module.Engine,
 		"limits": map[string]any{
 			"timeoutMs": timeoutMs,
 			"memoryMB":  memoryMB,
 		},
 		"capabilities": requiredCapabilities,
-		"output": map[string]any{
-			"echo": input,
-		},
+		"output":       output,
 	}, nil
 }
 
@@ -171,6 +195,18 @@ func normalizeModule(module Module) (Module, error) {
 		entryPoint = "main"
 	}
 	wit := strings.TrimSpace(module.WIT)
+	engine := strings.ToLower(strings.TrimSpace(module.Engine))
+	binary, err := resolveModuleBinary(module)
+	if err != nil {
+		return Module{}, err
+	}
+	if engine == "" {
+		if len(binary) > 0 {
+			engine = "wazero"
+		} else {
+			engine = "synthetic"
+		}
+	}
 	normalizedCaps := uniqueLowerCapabilities(module.Capabilities, nil)
 
 	return Module{
@@ -181,6 +217,9 @@ func normalizeModule(module Module) (Module, error) {
 		Capabilities: normalizedCaps,
 		WIT:          wit,
 		EntryPoint:   entryPoint,
+		Engine:       engine,
+		WasmPath:     strings.TrimSpace(module.WasmPath),
+		Binary:       binary,
 	}, nil
 }
 
@@ -243,4 +282,116 @@ func toStringSlice(value any) []string {
 	default:
 		return []string{}
 	}
+}
+
+func resolveModuleBinary(module Module) ([]byte, error) {
+	if len(module.Binary) > 0 {
+		return append([]byte(nil), module.Binary...), nil
+	}
+	if encoded := strings.TrimSpace(module.WasmBase64); encoded != "" {
+		decoded, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return nil, fmt.Errorf("invalid wasmBase64 for module %q: %w", module.ID, err)
+		}
+		return decoded, nil
+	}
+	if path := strings.TrimSpace(module.WasmPath); path != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed reading wasmPath for module %q: %w", module.ID, err)
+		}
+		return raw, nil
+	}
+	return nil, nil
+}
+
+func executeCompiledModule(ctx context.Context, module Module, input map[string]any, timeoutMs int) (map[string]any, error) {
+	callCtx := ctx
+	cancel := func() {}
+	if timeoutMs > 0 {
+		callCtx, cancel = context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+	}
+	defer cancel()
+
+	rt := wazero.NewRuntime(callCtx)
+	defer func() {
+		_ = rt.Close(callCtx)
+	}()
+
+	compiled, err := rt.CompileModule(callCtx, module.Binary)
+	if err != nil {
+		return nil, fmt.Errorf("compile failed: %w", err)
+	}
+	inst, err := rt.InstantiateModule(callCtx, compiled, wazero.NewModuleConfig())
+	if err != nil {
+		return nil, fmt.Errorf("instantiate failed: %w", err)
+	}
+
+	entry := strings.TrimSpace(module.EntryPoint)
+	if entry == "" {
+		entry = "main"
+	}
+	fn := inst.ExportedFunction(entry)
+	if fn == nil {
+		return nil, fmt.Errorf("exported function %q not found", entry)
+	}
+
+	args, err := parseWasmArgs(input["args"])
+	if err != nil {
+		return nil, err
+	}
+
+	results, err := fn.Call(callCtx, args...)
+	if err != nil {
+		return nil, err
+	}
+	converted := make([]uint64, len(results))
+	for idx, value := range results {
+		converted[idx] = value
+	}
+
+	output := map[string]any{
+		"engine":   "wazero",
+		"function": entry,
+		"results":  converted,
+	}
+	if len(converted) == 1 {
+		output["result"] = converted[0]
+	}
+	return output, nil
+}
+
+func parseWasmArgs(raw any) ([]uint64, error) {
+	if raw == nil {
+		return []uint64{}, nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("wasm args must be an array")
+	}
+	out := make([]uint64, 0, len(items))
+	for _, item := range items {
+		switch value := item.(type) {
+		case uint64:
+			out = append(out, value)
+		case int:
+			if value < 0 {
+				return nil, fmt.Errorf("wasm args cannot contain negative integers")
+			}
+			out = append(out, uint64(value))
+		case int64:
+			if value < 0 {
+				return nil, fmt.Errorf("wasm args cannot contain negative integers")
+			}
+			out = append(out, uint64(value))
+		case float64:
+			if value < 0 {
+				return nil, fmt.Errorf("wasm args cannot contain negative numbers")
+			}
+			out = append(out, uint64(value))
+		default:
+			return nil, fmt.Errorf("unsupported wasm arg type %T", item)
+		}
+	}
+	return out, nil
 }

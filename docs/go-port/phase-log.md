@@ -409,3 +409,27 @@
   - `gofmt -w ./cmd ./internal`
   - `go test ./...`
   - `go vet ./...`
+
+### Post-v2 Continuation (Issue #3) - Slice 3: WASM Engine Depth (`wazero`)
+
+- Added real WASM engine execution path to Go runtime using `github.com/tetratelabs/wazero`.
+- Extended module install schema to support compiled module sources:
+  - `wasmBase64`
+  - `wasmPath`
+  - in-memory `Binary` bytes (internal)
+- Runtime execution behavior:
+  - modules with compiled bytes run through `wazero` exported function calls.
+  - modules without bytes retain prior synthetic execution path for backward compatibility.
+  - output now reports execution engine (`wazero` vs `synthetic`).
+- Added regression tests:
+  - compiled module execution via `wasmBase64`
+  - invalid base64 rejection on install
+  - missing entrypoint error
+  - unsupported wasm argument type error
+- Added Go module dependency + lock updates:
+  - `go.mod` / `go.sum` include `wazero`.
+- Validation completed (Dockerized Go toolchain):
+  - `go mod tidy`
+  - `gofmt -w ./cmd ./internal`
+  - `go test ./...`
+  - `go vet ./...`
