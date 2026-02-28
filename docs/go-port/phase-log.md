@@ -271,3 +271,28 @@
   - `gofmt -w ./cmd ./internal`
   - `go test ./...`
   - `go vet ./...`
+
+### v2.0 Program Phase 6 Slice: Memory Vector + Graph Recall Surfaces
+
+- Upgraded memory store internals with embedded vector + graph indexing:
+  - vector embeddings per message entry (normalized token vectors).
+  - graph edges across session/channel/role/method/term nodes.
+  - deterministic index rebuild on append/load for consistency.
+- Added memory depth APIs in store:
+  - `SemanticRecall(query, limit)`
+  - `GraphNeighbors(node, limit)`
+  - `RecallSynthesis(query, limit)`
+  - `Stats()` (entries/vectors/graph nodes/graph edges/persistence).
+- Extended persisted memory snapshot to include vector + graph structures.
+- Integrated memory stats exposure into gateway responses:
+  - `config.get` now includes `memory` stats object.
+  - `status` and `doctor.memory.status` include deep memory stats.
+- Added tests:
+  - semantic recall relevance
+  - graph neighbor retrieval + recall synthesis
+  - stats + persistence/recovery verification
+  - gateway `config.get` memory stats contract check
+- Validation completed (Dockerized Go toolchain):
+  - `gofmt -w ./cmd ./internal`
+  - `go test ./...`
+  - `go vet ./...`

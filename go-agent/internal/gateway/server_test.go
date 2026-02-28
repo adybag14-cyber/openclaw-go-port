@@ -745,6 +745,31 @@ func TestEdgeWasmAndRoutinesPhase7Methods(t *testing.T) {
 	}
 }
 
+func TestConfigGetIncludesMemoryStats(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-memory-stats"
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	configResp := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "config-memory-stats",
+		"method": "config.get",
+		"params": map[string]any{},
+	})
+	result := assertRPCResult(t, configResp)
+	memoryObj, ok := result["memory"].(map[string]any)
+	if !ok {
+		t.Fatalf("config.get should include memory stats object")
+	}
+	if memoryObj["entries"] == nil || memoryObj["vectors"] == nil {
+		t.Fatalf("memory stats should include entries and vectors counts, got %v", memoryObj)
+	}
+}
+
 func TestEdgePhase7MethodMatrix(t *testing.T) {
 	cfg := config.Default()
 	cfg.Runtime.StatePath = "memory://test-edge-phase7-matrix"

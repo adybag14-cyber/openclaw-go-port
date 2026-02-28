@@ -593,6 +593,7 @@ func (s *Server) handleCompatDoctorMemory() map[string]any {
 		"lastError":    lastError,
 		"checkedAt":    time.Now().UTC().Format(time.RFC3339),
 		"maxRetention": 10000,
+		"stats":        s.memory.Stats(),
 	}
 }
 

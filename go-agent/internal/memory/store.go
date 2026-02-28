@@ -2,8 +2,10 @@ package memory
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -20,17 +22,27 @@ type MessageEntry struct {
 	CreatedAt string         `json:"createdAt"`
 }
 
+type GraphEdge struct {
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Weight int    `json:"weight"`
+}
+
 type Store struct {
 	mu         sync.RWMutex
 	path       string
 	persist    bool
 	maxEntries int
 	entries    []MessageEntry
+	vectors    map[string]map[string]float64
+	graph      map[string]map[string]int
 	lastError  string
 }
 
 type persistedState struct {
-	Entries []MessageEntry `json:"entries"`
+	Entries []MessageEntry                `json:"entries"`
+	Vectors map[string]map[string]float64 `json:"vectors,omitempty"`
+	Graph   map[string]map[string]int     `json:"graph,omitempty"`
 }
 
 func NewStore(path string, maxEntries int) *Store {
@@ -42,6 +54,8 @@ func NewStore(path string, maxEntries int) *Store {
 		persist:    shouldPersist(path),
 		maxEntries: maxEntries,
 		entries:    make([]MessageEntry, 0, maxEntries),
+		vectors:    map[string]map[string]float64{},
+		graph:      map[string]map[string]int{},
 	}
 	s.load()
 	return s
@@ -60,6 +74,7 @@ func (s *Store) Append(entry MessageEntry) {
 		start := len(s.entries) - s.maxEntries
 		s.entries = append([]MessageEntry(nil), s.entries[start:]...)
 	}
+	s.rebuildIndexesLocked()
 	s.mu.Unlock()
 	s.persistLockedSnapshot()
 }
@@ -108,6 +123,118 @@ func (s *Store) HistoryByChannel(channel string, limit int) []MessageEntry {
 	return out
 }
 
+func (s *Store) SemanticRecall(query string, limit int) []MessageEntry {
+	if limit <= 0 {
+		limit = 5
+	}
+	queryVector := embedText(query)
+	if len(queryVector) == 0 {
+		return []MessageEntry{}
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	type scored struct {
+		entry MessageEntry
+		score float64
+	}
+	scoredEntries := make([]scored, 0, len(s.entries))
+	for _, entry := range s.entries {
+		vec, ok := s.vectors[entry.ID]
+		if !ok || len(vec) == 0 {
+			continue
+		}
+		score := cosineSimilarity(queryVector, vec)
+		if score <= 0 {
+			continue
+		}
+		scoredEntries = append(scoredEntries, scored{entry: entry, score: score})
+	}
+	sort.Slice(scoredEntries, func(i, j int) bool {
+		return scoredEntries[i].score > scoredEntries[j].score
+	})
+	if len(scoredEntries) > limit {
+		scoredEntries = scoredEntries[:limit]
+	}
+	out := make([]MessageEntry, 0, len(scoredEntries))
+	for _, item := range scoredEntries {
+		out = append(out, item.entry)
+	}
+	return out
+}
+
+func (s *Store) GraphNeighbors(node string, limit int) []GraphEdge {
+	if limit <= 0 {
+		limit = 10
+	}
+	key := strings.ToLower(strings.TrimSpace(node))
+	if key == "" {
+		return []GraphEdge{}
+	}
+
+	s.mu.RLock()
+	adj := s.graph[key]
+	s.mu.RUnlock()
+	if len(adj) == 0 {
+		return []GraphEdge{}
+	}
+
+	edges := make([]GraphEdge, 0, len(adj))
+	for to, weight := range adj {
+		edges = append(edges, GraphEdge{
+			From:   key,
+			To:     to,
+			Weight: weight,
+		})
+	}
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].Weight == edges[j].Weight {
+			return edges[i].To < edges[j].To
+		}
+		return edges[i].Weight > edges[j].Weight
+	})
+	if len(edges) > limit {
+		edges = edges[:limit]
+	}
+	return edges
+}
+
+func (s *Store) RecallSynthesis(query string, limit int) map[string]any {
+	semantic := s.SemanticRecall(query, limit)
+	term := firstSignificantTerm(query)
+	neighbors := []GraphEdge{}
+	if term != "" {
+		neighbors = s.GraphNeighbors("term:"+term, limit)
+	}
+	return map[string]any{
+		"query":     strings.TrimSpace(query),
+		"semantic":  semantic,
+		"neighbors": neighbors,
+		"count": map[string]any{
+			"semantic":  len(semantic),
+			"neighbors": len(neighbors),
+		},
+	}
+}
+
+func (s *Store) Stats() map[string]any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	graphEdges := 0
+	for _, adj := range s.graph {
+		graphEdges += len(adj)
+	}
+	return map[string]any{
+		"entries":    len(s.entries),
+		"vectors":    len(s.vectors),
+		"graphNodes": len(s.graph),
+		"graphEdges": graphEdges,
+		"persistent": s.persist,
+		"statePath":  s.path,
+		"lastError":  s.lastError,
+	}
+}
+
 func (s *Store) LastError() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -147,6 +274,7 @@ func (s *Store) load() {
 		start := len(s.entries) - s.maxEntries
 		s.entries = append([]MessageEntry(nil), s.entries[start:]...)
 	}
+	s.rebuildIndexesLocked()
 	s.mu.Unlock()
 }
 
@@ -157,6 +285,8 @@ func (s *Store) persistLockedSnapshot() {
 	s.mu.RLock()
 	payload := persistedState{
 		Entries: append([]MessageEntry(nil), s.entries...),
+		Vectors: cloneVectors(s.vectors),
+		Graph:   cloneGraph(s.graph),
 	}
 	path := s.path
 	s.mu.RUnlock()
@@ -182,6 +312,45 @@ func (s *Store) persistLockedSnapshot() {
 	}
 }
 
+func (s *Store) rebuildIndexesLocked() {
+	s.vectors = map[string]map[string]float64{}
+	s.graph = map[string]map[string]int{}
+	for _, entry := range s.entries {
+		if vector := embedText(entry.Text); len(vector) > 0 {
+			s.vectors[entry.ID] = vector
+		}
+		term := firstSignificantTerm(entry.Text)
+		if term != "" {
+			s.addGraphEdgeLocked("entry:"+entry.ID, "term:"+term)
+		}
+		if sid := strings.TrimSpace(entry.SessionID); sid != "" {
+			s.addGraphEdgeLocked("session:"+sid, "entry:"+entry.ID)
+			if channel := strings.ToLower(strings.TrimSpace(entry.Channel)); channel != "" {
+				s.addGraphEdgeLocked("session:"+sid, "channel:"+channel)
+			}
+		}
+		if channel := strings.ToLower(strings.TrimSpace(entry.Channel)); channel != "" {
+			s.addGraphEdgeLocked("channel:"+channel, "method:"+strings.ToLower(strings.TrimSpace(entry.Method)))
+		}
+		role := strings.ToLower(strings.TrimSpace(entry.Role))
+		if role != "" {
+			s.addGraphEdgeLocked("role:"+role, "method:"+strings.ToLower(strings.TrimSpace(entry.Method)))
+		}
+	}
+}
+
+func (s *Store) addGraphEdgeLocked(from string, to string) {
+	fromKey := strings.ToLower(strings.TrimSpace(from))
+	toKey := strings.ToLower(strings.TrimSpace(to))
+	if fromKey == "" || toKey == "" {
+		return
+	}
+	if _, ok := s.graph[fromKey]; !ok {
+		s.graph[fromKey] = map[string]int{}
+	}
+	s.graph[fromKey][toKey]++
+}
+
 func shouldPersist(path string) bool {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {
@@ -191,6 +360,84 @@ func shouldPersist(path string) bool {
 		return false
 	}
 	return true
+}
+
+func embedText(text string) map[string]float64 {
+	tokens := strings.Fields(strings.ToLower(strings.TrimSpace(text)))
+	if len(tokens) == 0 {
+		return map[string]float64{}
+	}
+	freq := map[string]float64{}
+	for _, token := range tokens {
+		token = strings.Trim(token, ".,!?;:\"'()[]{}")
+		if len(token) < 2 {
+			continue
+		}
+		freq[token]++
+	}
+	if len(freq) == 0 {
+		return map[string]float64{}
+	}
+	var norm float64
+	for _, value := range freq {
+		norm += value * value
+	}
+	norm = math.Sqrt(norm)
+	if norm == 0 {
+		return freq
+	}
+	for token, value := range freq {
+		freq[token] = value / norm
+	}
+	return freq
+}
+
+func cosineSimilarity(a map[string]float64, b map[string]float64) float64 {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	dot := 0.0
+	for token, av := range a {
+		if bv, ok := b[token]; ok {
+			dot += av * bv
+		}
+	}
+	return dot
+}
+
+func firstSignificantTerm(text string) string {
+	tokens := strings.Fields(strings.ToLower(strings.TrimSpace(text)))
+	for _, token := range tokens {
+		token = strings.Trim(token, ".,!?;:\"'()[]{}")
+		if len(token) >= 4 {
+			return token
+		}
+	}
+	return ""
+}
+
+func cloneVectors(input map[string]map[string]float64) map[string]map[string]float64 {
+	out := make(map[string]map[string]float64, len(input))
+	for key, vector := range input {
+		row := make(map[string]float64, len(vector))
+		for term, value := range vector {
+			row[term] = value
+		}
+		out[key] = row
+	}
+	return out
+}
+
+func cloneGraph(input map[string]map[string]int) map[string]map[string]int {
+	out := make(map[string]map[string]int, len(input))
+	for from, adj := range input {
+		row := make(map[string]int, len(adj))
+		for to, weight := range adj {
+			row[to] = weight
+		}
+		out[from] = row
+	}
+	return out
 }
 
 func reverse[T any](items []T) {

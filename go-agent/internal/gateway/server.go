@@ -345,6 +345,7 @@ func (s *Server) handleConfigGet() map[string]any {
 		"channels": map[string]any{
 			"telegramConfigured": strings.TrimSpace(s.cfg.Channels.Telegram.BotToken) != "",
 		},
+		"memory":   s.memory.Stats(),
 		"security": s.guard.Snapshot(),
 		"routines": map[string]any{
 			"count": len(s.routines.List()),
@@ -933,6 +934,7 @@ func (s *Server) statusPayload() map[string]any {
 		"memory": map[string]any{
 			"count":     s.memory.Count(),
 			"lastError": s.memory.LastError(),
+			"stats":     s.memory.Stats(),
 		},
 		"runtime": s.runtime.Snapshot(),
 		"state": map[string]any{
