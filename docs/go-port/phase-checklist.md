@@ -22,13 +22,13 @@
 - [x] Add tests for config + health endpoint
 - [x] Run `go test ./...`
 - [x] Run `go vet ./...`
-- [ ] Mark phase 1 complete in issue
+- [x] Mark phase 1 complete in issue
 
 ## Phase 2: Protocol and RPC Envelopes
 
-- [ ] Port protocol framing and RPC helpers
-- [ ] Port canonical method resolution table scaffold
-- [ ] Add fixture-based protocol compatibility tests
+- [x] Port protocol framing and RPC helpers
+- [x] Port canonical method resolution table scaffold
+- [x] Add fixture-based protocol compatibility tests
 
 ## Phase 3: Gateway and Scheduler Core
 

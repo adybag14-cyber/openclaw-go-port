@@ -33,3 +33,27 @@
   - `go mod tidy`
   - `go test ./...`
   - `go vet ./...`
+
+### Phase 2 Protocol + RPC Scaffold Delivered
+
+- Added `internal/protocol` with:
+  - frame kind detection (`req/resp/event/error`)
+  - method family classification parity helpers
+  - RPC request/response/error parsing helpers
+  - Rust-style response envelope builders (`rpc_success_response_frame`/`rpc_error_response_frame` equivalent semantics)
+- Added fixture-backed protocol compatibility tests:
+  - `internal/protocol/testdata/frame-corpus.json`
+  - corpus snapshot assertions for kind/family/request-id/error-presence.
+- Added `internal/rpc` method registry scaffold:
+  - canonical normalization and resolve behavior
+  - supported-method list parity scaffold from Rust method surface.
+- Updated gateway `/rpc` handling to:
+  - validate `type: req` envelope
+  - resolve canonical methods through registry
+  - return Rust-style `resp` envelope results/errors
+  - implement `health`/`status` RPC success path.
+- Validation commands passed via Docker:
+  - `gofmt -w ./cmd ./internal`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go vet ./...`

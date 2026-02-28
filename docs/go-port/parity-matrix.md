@@ -6,9 +6,9 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 | --- | --- | --- | --- |
 | `src/main.rs` | `go-agent/cmd/openclaw-go` | in-progress | CLI bootstrap started in phase 1 |
 | `src/config.rs` | `go-agent/internal/config` | in-progress | Minimal config + env overrides in phase 1 |
-| `src/gateway_server.rs` | `go-agent/internal/gateway` | in-progress | Health/control HTTP skeleton in phase 1 |
-| `src/protocol.rs` | `go-agent/internal/protocol` | not-started | Phase 2 target |
-| `src/gateway.rs` | `go-agent/internal/rpc` + `internal/gateway` | not-started | Method registry + handlers |
+| `src/gateway_server.rs` | `go-agent/internal/gateway` | in-progress | HTTP health endpoint + RPC envelope plumbing and status scaffold |
+| `src/protocol.rs` | `go-agent/internal/protocol` | done | Framing, method-family classification, rpc request/response/error helpers, fixture corpus tests |
+| `src/gateway.rs` | `go-agent/internal/rpc` + `internal/gateway` | in-progress | Method registry scaffold (supported list + canonical resolution), health/status RPC wiring |
 | `src/scheduler.rs` | `go-agent/internal/scheduler` | not-started | Phase 3 target |
 | `src/runtime.rs` | `go-agent/internal/runtime` | not-started | Depends on protocol + scheduler |
 | `src/tool_registry.rs` | `go-agent/internal/tools` | not-started | Phase 4 target |
@@ -29,7 +29,7 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 
 ## Current Gap Summary
 
-- Completed: `0`
-- In-progress: `3`
-- Not-started: `19`
+- Completed: `1`
+- In-progress: `4`
+- Not-started: `17`
 - Deferred: `0`
