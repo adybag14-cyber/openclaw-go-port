@@ -2,7 +2,9 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -722,6 +724,72 @@ func TestEdgePhase7MethodMatrix(t *testing.T) {
 		})
 		result := assertRPCResult(t, frame)
 		check.assert(t, result)
+	}
+}
+
+func TestAllSupportedMethodsDispatchWithoutNotImplemented(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-supported-dispatch"
+	cfg.Channels.Telegram.BotToken = "telegram-bot-token"
+	cfg.Channels.Telegram.DefaultTarget = "coverage-room"
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+
+	bootstrap, bootstrapErr := s.dispatchRPC(context.Background(), "bootstrap-connect", "connect", map[string]any{
+		"role":    "client",
+		"channel": "webchat",
+		"client": map[string]any{
+			"id": "coverage-client",
+		},
+	})
+	if bootstrapErr != nil {
+		t.Fatalf("bootstrap connect failed: %+v", bootstrapErr)
+	}
+	sessionID, _ := bootstrap["sessionId"].(string)
+	if sessionID == "" {
+		t.Fatalf("bootstrap connect did not return sessionId")
+	}
+
+	paramsByMethod := map[string]map[string]any{
+		"session.status":            {"sessionId": sessionID},
+		"sessions.history":          {"sessionId": sessionID},
+		"sessions.preview":          {"limit": 10},
+		"sessions.patch":            {"sessionId": sessionID, "channel": "webchat"},
+		"sessions.resolve":          {"sessionId": sessionID},
+		"sessions.reset":            {"sessionId": sessionID},
+		"sessions.delete":           {"sessionId": sessionID},
+		"sessions.compact":          {"limit": 100},
+		"sessions.usage":            {"sessionId": sessionID},
+		"sessions.usage.timeseries": {"sessionId": sessionID},
+		"sessions.usage.logs":       {"sessionId": sessionID},
+		"channels.logout":           {"channel": "webchat"},
+		"web.login.wait":            {"loginSessionId": "missing", "timeoutMs": 1},
+		"auth.oauth.wait":           {"loginSessionId": "missing", "timeoutMs": 1},
+		"auth.oauth.complete":       {"loginSessionId": "missing", "code": "OC-000000"},
+		"auth.oauth.logout":         {"loginSessionId": "missing"},
+		"agent.wait":                {"jobId": "missing", "timeoutMs": 1},
+	}
+
+	methods := s.methods.SupportedMethods()
+	if len(methods) != 134 {
+		t.Fatalf("supported method count changed: got=%d want=134", len(methods))
+	}
+	for idx, method := range methods {
+		resolved := s.methods.Resolve(method)
+		params := map[string]any{}
+		if seeded, ok := paramsByMethod[resolved.Canonical]; ok {
+			params = cloneMap(seeded)
+		}
+		_, rpcErr := s.dispatchRPC(
+			context.Background(),
+			fmt.Sprintf("coverage-%03d", idx+1),
+			resolved.Canonical,
+			params,
+		)
+		if rpcErr != nil && rpcErr.Code == -32601 {
+			t.Fatalf("method %q resolved %q still returns not implemented", method, resolved.Canonical)
+		}
 	}
 }
 

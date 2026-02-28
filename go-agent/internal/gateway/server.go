@@ -41,6 +41,7 @@ type Server struct {
 	runtime   *agentruntime.Runtime
 	state     *state.Store
 	guard     *security.Guard
+	compat    *compatState
 	routines  *routines.Manager
 	wasm      *wasmruntime.Runtime
 	webLogin  *webbridge.Manager
@@ -68,6 +69,7 @@ func New(cfg config.Config, build buildinfo.Info) *Server {
 			CredentialSensitiveKeys: cfg.Security.CredentialSensitiveKeys,
 			CredentialLeakAction:    cfg.Security.CredentialLeakAction,
 		}),
+		compat:   newCompatState(),
 		routines: routines.NewManager(),
 		wasm:     wasmruntime.NewRuntime(),
 		webLogin: webbridge.NewManager(10 * time.Minute),
@@ -294,6 +296,9 @@ func (s *Server) dispatchRPC(ctx context.Context, requestID string, canonical st
 		return s.handleAgentWait(ctx, params)
 	default:
 		known := s.methods.Resolve(canonical).Known
+		if known {
+			return s.handleCompatMethod(ctx, requestID, canonical, params)
+		}
 		return nil, &dispatchError{
 			Code:    -32601,
 			Message: "method not implemented in go phase-4 scaffold",
