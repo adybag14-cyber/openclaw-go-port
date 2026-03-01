@@ -123,6 +123,78 @@ func newCompatState() *compatState {
 				"capability": "fast-response",
 				"aliases":    []string{"instant", "mini", "fast"},
 			},
+			{
+				"id":         "gpt-5.3-codex",
+				"name":       "GPT-5.3 Codex",
+				"mode":       "pro",
+				"provider":   "codex",
+				"capability": "coding",
+				"aliases":    []string{"codex", "gpt5.3-codex", "gpt-5.3-codex"},
+			},
+			{
+				"id":         "qwen3.5-397b-a17b",
+				"name":       "Qwen 3.5 397B",
+				"mode":       "thinking",
+				"provider":   "qwen",
+				"capability": "reasoning",
+				"aliases":    []string{"qwen3.5", "qwen35", "qwen-3.5"},
+			},
+			{
+				"id":         "qwen3.5-plus",
+				"name":       "Qwen 3.5 Plus",
+				"mode":       "pro",
+				"provider":   "qwen",
+				"capability": "general",
+				"aliases":    []string{"qwen-plus"},
+			},
+			{
+				"id":         "qwen3.5-flash",
+				"name":       "Qwen 3.5 Flash",
+				"mode":       "instant",
+				"provider":   "qwen",
+				"capability": "fast-response",
+				"aliases":    []string{"qwen-flash"},
+			},
+			{
+				"id":         "inception/mercury",
+				"name":       "Mercury 2",
+				"mode":       "thinking",
+				"provider":   "inception",
+				"capability": "reasoning",
+				"aliases":    []string{"mercury", "mercury2", "mercury-2"},
+			},
+			{
+				"id":         "opencode/glm-5-free",
+				"name":       "OpenCode GLM-5 Free",
+				"mode":       "instant",
+				"provider":   "opencode",
+				"capability": "coding",
+				"aliases":    []string{"glm-5-free", "opencode-free"},
+			},
+			{
+				"id":         "opencode/kimi-k2.5-free",
+				"name":       "OpenCode Kimi K2.5 Free",
+				"mode":       "instant",
+				"provider":   "opencode",
+				"capability": "coding",
+				"aliases":    []string{"kimi-k2.5-free"},
+			},
+			{
+				"id":         "openrouter/qwen/qwen3-coder:free",
+				"name":       "OpenRouter Qwen3 Coder Free",
+				"mode":       "instant",
+				"provider":   "openrouter",
+				"capability": "coding",
+				"aliases":    []string{"qwen3-coder-free"},
+			},
+			{
+				"id":         "openrouter/google/gemini-2.0-flash-exp:free",
+				"name":       "OpenRouter Gemini 2.0 Flash Free",
+				"mode":       "instant",
+				"provider":   "openrouter",
+				"capability": "general",
+				"aliases":    []string{"gemini-2.0-flash-free", "gemini-free"},
+			},
 		},
 		telegramModelByTarget:    map[string]string{},
 		telegramProviderByTarget: map[string]string{},
@@ -295,7 +367,7 @@ func (c *compatState) resolveModelChoice(model string) (string, string, bool) {
 
 	for _, item := range c.models {
 		modelID := strings.ToLower(strings.TrimSpace(toString(item["id"], "")))
-		if modelID == normalized {
+		if modelID == normalized || normalizeModelAlias(modelID) == normalized {
 			return modelID, "", true
 		}
 	}
@@ -329,6 +401,11 @@ func (c *compatState) resolveModelChoice(model string) (string, string, bool) {
 		name := normalizeModelAlias(toString(item["name"], ""))
 		if name != "" && name == normalized {
 			return modelID, normalized, true
+		}
+		for _, alias := range toStringSlice(item["aliases"]) {
+			if normalizeModelAlias(alias) == normalized {
+				return modelID, normalized, true
+			}
 		}
 	}
 

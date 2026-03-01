@@ -54,3 +54,4 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 - Slice 16 complete (Issue #10): compat dispatch tightening (generic fallback removed; unsupported compat methods now return strict `-32601`, with supported-method coverage guard against silent fallback drift).
 - Slice 17 complete (Issue #11): tool runtime depth expansion (Rust-style top-level tool families + in-memory message/session lifecycle actions + family integration coverage in Go runtime).
 - Slice 18 complete (Issue #12): provider/auth catalog widening (Rust-aligned provider alias normalization, expanded OAuth provider catalog payloads, and Qwen `copaw` alias support across `/auth providers`, `auth.oauth.providers`, and browser-login verification routing).
+- Slice 19 complete (Issue #13): model catalog widening (Qwen/OpenCode/Inception/OpenRouter/Codex model descriptors) plus slash-scoped provider/model resolution hardening and alias-backed model matching in `resolveModelChoice`.

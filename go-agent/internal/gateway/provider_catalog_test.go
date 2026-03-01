@@ -112,3 +112,60 @@ func TestParseAuthStartScopeAcceptsCopawAlias(t *testing.T) {
 		t.Fatalf("expected account mobile, got %q", scope.Account)
 	}
 }
+
+func TestResolveModelChoiceSupportsSlashScopedCatalogIDs(t *testing.T) {
+	compat := newCompatState()
+
+	modelID, alias, ok := compat.resolveModelChoice("openrouter/qwen/qwen3-coder:free")
+	if !ok {
+		t.Fatalf("expected slash-scoped model id to resolve")
+	}
+	if modelID != "openrouter/qwen/qwen3-coder:free" {
+		t.Fatalf("unexpected model id: %s", modelID)
+	}
+	if alias != "" {
+		t.Fatalf("expected direct id match alias to be empty, got %q", alias)
+	}
+
+	modelID, alias, ok = compat.resolveModelChoice("qwen3-coder-free")
+	if !ok {
+		t.Fatalf("expected alias to resolve slash-scoped model id")
+	}
+	if modelID != "openrouter/qwen/qwen3-coder:free" {
+		t.Fatalf("unexpected model id from alias: %s", modelID)
+	}
+	if alias != "qwen3-coder-free" {
+		t.Fatalf("unexpected alias key: %q", alias)
+	}
+}
+
+func TestExpandedModelCatalogListsProviderSpecificModels(t *testing.T) {
+	compat := newCompatState()
+
+	qwenModels := compat.listModelIDsForProvider("copaw")
+	if len(qwenModels) == 0 {
+		t.Fatalf("expected qwen models for copaw alias provider")
+	}
+	containsQwenPrimary := false
+	for _, model := range qwenModels {
+		if model == "qwen3.5-397b-a17b" {
+			containsQwenPrimary = true
+			break
+		}
+	}
+	if !containsQwenPrimary {
+		t.Fatalf("expected qwen3.5-397b-a17b in qwen model list, got %v", qwenModels)
+	}
+
+	openRouterModels := compat.listModelIDsForProvider("openrouter")
+	containsSlashScoped := false
+	for _, model := range openRouterModels {
+		if model == "openrouter/qwen/qwen3-coder:free" {
+			containsSlashScoped = true
+			break
+		}
+	}
+	if !containsSlashScoped {
+		t.Fatalf("expected slash-scoped openrouter model in provider list, got %v", openRouterModels)
+	}
+}

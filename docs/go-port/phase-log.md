@@ -786,3 +786,23 @@
   - `/usr/local/go/bin/gofmt -w ...`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation (Issue #13) - Slice 1: Model Catalog Widening + Slash-Scoped Resolution
+
+- Expanded compat model catalog beyond ChatGPT-only defaults to cover parity-critical provider models:
+  - Codex: `gpt-5.3-codex`.
+  - Qwen: `qwen3.5-397b-a17b`, `qwen3.5-plus`, `qwen3.5-flash`.
+  - Inception: `inception/mercury`.
+  - OpenCode: `opencode/glm-5-free`, `opencode/kimi-k2.5-free`.
+  - OpenRouter: `openrouter/qwen/qwen3-coder:free`, `openrouter/google/gemini-2.0-flash-exp:free`.
+- Hardened `resolveModelChoice` matching semantics:
+  - supports deterministic matching for slash-scoped provider/model IDs by comparing normalized forms of catalog IDs.
+  - supports alias-based matching from model descriptor `aliases` arrays.
+- Added parity-focused test coverage:
+  - slash-scoped model IDs resolve directly.
+  - slash-scoped model aliases resolve correctly.
+  - provider-scoped model listing includes expanded Qwen/OpenRouter catalog entries.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`
