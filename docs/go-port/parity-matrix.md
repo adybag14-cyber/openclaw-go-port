@@ -64,3 +64,4 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 - Slice 26 complete (Issue #20): TTS runtime depth parity (provider catalog availability metadata, `kittentts` adapter execution path, strict real-audio conversion mode, and Telegram `/tts` contract alignment).
 - Slice 27 complete (Issue #21): Telegram runtime parity closure (real Bot API delivery + inbound long-poll command/plain-text reply loop) while preserving generic multi-channel adapter behavior.
 - Slice 28 complete: Telegram delivery hardening (`/command@bot` parsing, `/start`/`/help`, long-message chunking) and expanded cross-platform release matrix (`windows/arm64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`).
+- Slice 29 complete: Rust-to-Go provider parity closure in `models.list`/Telegram model catalog (`claude`, `groq`, `zhipuai`, `zai`) plus websocket root compatibility route for legacy bridge clients (`ws://host:port` without `/ws`).

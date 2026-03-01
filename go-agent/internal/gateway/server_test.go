@@ -125,6 +125,46 @@ func TestWebSocketRPCDispatch(t *testing.T) {
 	assertRPCErrorCode(t, failure, -32600)
 }
 
+func TestWebSocketRPCDispatchRootCompatibility(t *testing.T) {
+	s := New(config.Default(), buildinfo.Default())
+	defer s.Close()
+
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	httpURL, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatalf("parse test server url failed: %v", err)
+	}
+	wsURL := "ws://" + httpURL.Host + "/"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("websocket dial on root compatibility route failed: %v", err)
+	}
+	defer conn.Close()
+
+	if err := conn.WriteJSON(map[string]any{
+		"type":   "req",
+		"id":     "ws-root-health",
+		"method": "health",
+		"params": map[string]any{},
+	}); err != nil {
+		t.Fatalf("write ws frame failed: %v", err)
+	}
+
+	var success map[string]any
+	if err := conn.ReadJSON(&success); err != nil {
+		t.Fatalf("read ws root response failed: %v", err)
+	}
+	result, ok := success["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected ws result object, got %v", success)
+	}
+	if status := toString(result["status"], ""); status != "ok" {
+		t.Fatalf("expected ws health status ok, got %v", result["status"])
+	}
+}
+
 func TestConnectAuthAndSessionLifecycle(t *testing.T) {
 	cfg := config.Default()
 	cfg.Gateway.Server.AuthMode = "token"

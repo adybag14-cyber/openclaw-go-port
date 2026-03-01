@@ -142,6 +142,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/rpc", s.handleRPC)
 	mux.HandleFunc("/ws", s.handleWS)
+	// Compatibility route for legacy bridges that dial ws://host:port without /ws.
+	mux.HandleFunc("/", s.handleWS)
 	return mux
 }
 

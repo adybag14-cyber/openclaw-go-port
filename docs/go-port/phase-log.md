@@ -1060,3 +1060,21 @@
   - `/usr/local/go/bin/gofmt -w ./internal/channels/telegram_driver.go ./internal/channels/registry_test.go ./internal/gateway/telegram_commands.go ./internal/gateway/telegram_runtime_test.go`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation - Provider Parity Closure + Legacy WS Bridge Compatibility
+
+- Closed Rust->Go model provider parity gaps in Go compat model catalog:
+  - added Rust-matched providers in `models.list`/Telegram model surfaces:
+    - `claude`
+    - `groq`
+    - `zhipuai`
+    - `zai`
+- Added regression coverage:
+  - `TestModelCatalogIncludesRustProviderParitySet`
+- Added websocket root compatibility route in gateway handler:
+  - supports legacy bridge clients that dial `ws://host:port` without `/ws`.
+  - regression test added: `TestWebSocketRPCDispatchRootCompatibility`.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ./internal/gateway/compat.go ./internal/gateway/provider_catalog_test.go ./internal/gateway/server.go ./internal/gateway/server_test.go`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`

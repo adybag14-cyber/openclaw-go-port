@@ -171,6 +171,37 @@ func TestExpandedModelCatalogListsProviderSpecificModels(t *testing.T) {
 	}
 }
 
+func TestModelCatalogIncludesRustProviderParitySet(t *testing.T) {
+	compat := newCompatState()
+	providers := compat.listModelProviders()
+	if len(providers) == 0 {
+		t.Fatalf("expected non-empty model provider list")
+	}
+	seen := map[string]bool{}
+	for _, provider := range providers {
+		seen[provider] = true
+	}
+
+	// Rust model registry canonical providers (with Go canonical mapping applied):
+	// openai->chatgpt, openai-codex->codex, anthropic->claude, qwen-portal->qwen.
+	for _, required := range []string{
+		"chatgpt",
+		"codex",
+		"claude",
+		"groq",
+		"opencode",
+		"zhipuai",
+		"zai",
+		"qwen",
+		"inception",
+		"openrouter",
+	} {
+		if !seen[required] {
+			t.Fatalf("expected model provider %q in Go catalog, got %v", required, providers)
+		}
+	}
+}
+
 func TestCompatModelsListRejectsUnknownParams(t *testing.T) {
 	s := New(config.Default(), buildinfo.Default())
 	defer s.Close()
