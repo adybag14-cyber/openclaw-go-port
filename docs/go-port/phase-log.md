@@ -565,3 +565,57 @@
   - `/usr/local/go/bin/go mod tidy`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation (Issue #6) - Slice 3: Security Engine Depth Parity
+
+- Expanded Go security configuration/guard depth to close Rust-vs-Go parity gaps:
+  - new security config fields for EDR telemetry feed and attestation posture:
+    - `security.edr_telemetry_path`
+    - `security.edr_telemetry_max_age_secs`
+    - `security.edr_telemetry_risk_bonus`
+    - `security.attestation_expected_sha256`
+    - `security.attestation_report_path`
+    - `security.attestation_mismatch_risk_bonus`
+  - new env overrides:
+    - `OPENCLAW_GO_EDR_TELEMETRY_PATH`
+    - `OPENCLAW_GO_EDR_TELEMETRY_MAX_AGE_SECS`
+    - `OPENCLAW_GO_EDR_TELEMETRY_RISK_BONUS`
+    - `OPENCLAW_GO_ATTESTATION_EXPECTED_SHA256`
+    - `OPENCLAW_GO_ATTESTATION_REPORT_PATH`
+    - `OPENCLAW_GO_ATTESTATION_MISMATCH_RISK_BONUS`
+- Guard runtime depth additions:
+  - EDR telemetry feed scan with recency window + severity/tag/quarantine detection.
+  - cached feed checks to reduce repeated file I/O churn.
+  - runtime attestation digest snapshot with expected-hash mismatch risk scoring.
+  - attestation snapshot/report surfaced in guard snapshot payload.
+- Added regression tests:
+  - `TestEDRTelemetryFeedReview`
+  - `TestAttestationMismatchRaisesRisk`
+  - config defaults/env/validation tests for new security fields.
+
+### Post-v2 Continuation (Issue #6) - Slice 4: Edge Runtime Behavior Depth
+
+- Reduced edge simulation depth with executable runtime paths:
+  - `edge.voice.transcribe` now supports provider-order execution with local `tinywhisper` binary path + args:
+    - `OPENCLAW_GO_TINYWHISPER_BIN`
+    - `OPENCLAW_GO_TINYWHISPER_ARGS`
+  - `edge.enclave.prove` now supports attestation-binary execution path with structured request/response fallback:
+    - `OPENCLAW_GO_ENCLAVE_ATTEST_BIN`
+    - `OPENCLAW_GO_ENCLAVE_ATTEST_ARGS`
+    - `OPENCLAW_GO_ENCLAVE_ATTEST_TIMEOUT_MS`
+  - `edge.finetune.run` now enforces deeper contracts and runtime execution:
+    - dataset/auto-ingest memory requirement parity checks.
+    - non-dry-run trainer binary requirement (`OPENCLAW_GO_LORA_TRAINER_BIN`).
+    - trainer args/timeout envs:
+      - `OPENCLAW_GO_LORA_TRAINER_ARGS`
+      - `OPENCLAW_GO_LORA_TRAINER_TIMEOUT_MS`
+    - manifest persistence and real process execution/log tail capture for non-dry-run jobs.
+- Added regression/integration tests:
+  - `TestEdgeVoiceTranscribeUsesTinyWhisperWhenConfigured`
+  - `TestEdgeEnclaveProveUsesAttestationBinaryWhenConfigured`
+  - `TestEdgeFinetuneRunRequiresTrainerWhenDryRunDisabled`
+  - `TestEdgeFinetuneRunExecutesTrainerWhenConfigured`
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`

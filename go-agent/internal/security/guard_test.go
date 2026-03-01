@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestToolPolicyBlock(t *testing.T) {
@@ -181,5 +182,45 @@ func TestToolPolicySpecificOverrideGroup(t *testing.T) {
 	})
 	if decision.Action != ActionReview {
 		t.Fatalf("expected exact method policy to override group wildcard, got %s", decision.Action)
+	}
+}
+
+func TestEDRTelemetryFeedReview(t *testing.T) {
+	feedPath := filepath.Join(t.TempDir(), "edr.jsonl")
+	now := time.Now().UTC().UnixMilli()
+	line := `{"timestampMs":` + intString(int(now)) + `,"severity":"critical","tags":["benign"]}` + "\n"
+	if err := os.WriteFile(feedPath, []byte(line), 0o644); err != nil {
+		t.Fatalf("write feed: %v", err)
+	}
+
+	guard := NewGuard(GuardConfig{
+		DefaultAction:          "allow",
+		TelemetryAction:        "review",
+		EDRTelemetryPath:       feedPath,
+		EDRTelemetryMaxAgeSecs: 300,
+		EDRTelemetryRiskBonus:  45,
+	})
+
+	decision := guard.Evaluate("send", map[string]any{"message": "safe content"})
+	if decision.Action != ActionReview {
+		t.Fatalf("expected review from EDR telemetry feed, got %s", decision.Action)
+	}
+}
+
+func TestAttestationMismatchRaisesRisk(t *testing.T) {
+	guard := NewGuard(GuardConfig{
+		DefaultAction:           "allow",
+		AttestationExpectedSHA:  "0000000000000000000000000000000000000000000000000000000000000000",
+		AttestationMismatchRisk: 80,
+		RiskReviewThreshold:     40,
+		RiskBlockThreshold:      100,
+	})
+
+	decision := guard.Evaluate("send", map[string]any{"message": "safe"})
+	if decision.Action != ActionReview {
+		t.Fatalf("expected review from attestation mismatch risk, got %s", decision.Action)
+	}
+	if decision.RiskScore < 40 {
+		t.Fatalf("expected elevated risk score from attestation mismatch, got %d", decision.RiskScore)
 	}
 }

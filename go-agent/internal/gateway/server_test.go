@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1669,6 +1671,169 @@ func TestEdgeVoiceTranscribeUsesHintOrAudioStem(t *testing.T) {
 	transcript, _ := audioResult["transcript"].(string)
 	if !strings.Contains(strings.ToLower(transcript), "meeting-note") {
 		t.Fatalf("expected transcript synthesized from audio stem, got %q", transcript)
+	}
+}
+
+func TestEdgeVoiceTranscribeUsesTinyWhisperWhenConfigured(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "tinywhisper-mock.sh")
+	script := "#!/bin/sh\n" +
+		"echo \"transcript from tinywhisper\"\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write tinywhisper mock: %v", err)
+	}
+	if err := os.Chmod(bin, 0o755); err != nil {
+		t.Fatalf("chmod tinywhisper mock: %v", err)
+	}
+	t.Setenv("OPENCLAW_GO_TINYWHISPER_BIN", bin)
+
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-edge-voice-tinywhisper"
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	frame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-voice-tinywhisper",
+		"method": "edge.voice.transcribe",
+		"params": map[string]any{
+			"provider":  "tinywhisper",
+			"audioPath": "memory://clip.wav",
+			"language":  "en",
+		},
+	})
+	result := assertRPCResult(t, frame)
+	if providerUsed, _ := result["providerUsed"].(string); providerUsed != "tinywhisper" {
+		t.Fatalf("expected providerUsed=tinywhisper, got %v", result["providerUsed"])
+	}
+	if source, _ := result["source"].(string); source != "offline-local" {
+		t.Fatalf("expected source=offline-local, got %v", result["source"])
+	}
+}
+
+func TestEdgeEnclaveProveUsesAttestationBinaryWhenConfigured(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "attestation-mock.sh")
+	script := "#!/bin/sh\n" +
+		"cat >/dev/null\n" +
+		"echo '{\"quote\":\"quote-abc\",\"measurement\":\"mr-abc\"}'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write attestation mock: %v", err)
+	}
+	if err := os.Chmod(bin, 0o755); err != nil {
+		t.Fatalf("chmod attestation mock: %v", err)
+	}
+	t.Setenv("OPENCLAW_GO_ENCLAVE_ATTEST_BIN", bin)
+
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-edge-attestation-binary"
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	frame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-enclave-attestation-bin",
+		"method": "edge.enclave.prove",
+		"params": map[string]any{
+			"statement": "prove enclave posture",
+		},
+	})
+	result := assertRPCResult(t, frame)
+	if verified, _ := result["verified"].(bool); !verified {
+		t.Fatalf("expected verified=true when attestation binary succeeds")
+	}
+	if source, _ := result["source"].(string); source != "attestation-binary" {
+		t.Fatalf("expected source=attestation-binary, got %v", result["source"])
+	}
+	if scheme, _ := result["scheme"].(string); scheme != "attestation-quote-v1" {
+		t.Fatalf("expected attestation scheme, got %v", result["scheme"])
+	}
+}
+
+func TestEdgeFinetuneRunRequiresTrainerWhenDryRunDisabled(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-edge-finetune-trainer-required"
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	frame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-finetune-missing-trainer",
+		"method": "edge.finetune.run",
+		"params": map[string]any{
+			"dryRun": true,
+		},
+	})
+	_ = assertRPCResult(t, frame)
+
+	frame = rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-finetune-missing-trainer-hard",
+		"method": "edge.finetune.run",
+		"params": map[string]any{
+			"dryRun":           false,
+			"autoIngestMemory": true,
+		},
+	})
+	assertRPCErrorCode(t, frame, -32602)
+}
+
+func TestEdgeFinetuneRunExecutesTrainerWhenConfigured(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "trainer-mock.sh")
+	script := "#!/bin/sh\n" +
+		"echo \"trainer ok\"\n" +
+		"exit 0\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write trainer mock: %v", err)
+	}
+	if err := os.Chmod(bin, 0o755); err != nil {
+		t.Fatalf("chmod trainer mock: %v", err)
+	}
+	t.Setenv("OPENCLAW_GO_LORA_TRAINER_BIN", bin)
+	t.Setenv("OPENCLAW_GO_LORA_TRAINER_TIMEOUT_MS", "15000")
+
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-edge-finetune-exec"
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	outputPath := filepath.Join(t.TempDir(), "adapter-out")
+	frame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-finetune-exec",
+		"method": "edge.finetune.run",
+		"params": map[string]any{
+			"dryRun":           false,
+			"autoIngestMemory": true,
+			"outputPath":       outputPath,
+		},
+	})
+	result := assertRPCResult(t, frame)
+	if ok, _ := result["ok"].(bool); !ok {
+		t.Fatalf("expected finetune run ok=true, got %v", result["ok"])
+	}
+	execution, ok := result["execution"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected execution payload")
+	}
+	if attempted, _ := execution["attempted"].(bool); !attempted {
+		t.Fatalf("expected attempted=true for non-dry-run")
+	}
+	if success, _ := execution["success"].(bool); !success {
+		t.Fatalf("expected successful trainer execution")
+	}
+	manifestPath, _ := result["manifestPath"].(string)
+	if strings.TrimSpace(manifestPath) == "" {
+		t.Fatalf("expected manifestPath in response")
+	}
+	if _, err := os.Stat(manifestPath); err != nil {
+		t.Fatalf("expected manifest file to exist: %v", err)
 	}
 }
 

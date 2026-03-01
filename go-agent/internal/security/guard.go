@@ -1,11 +1,15 @@
 package security
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,8 +35,14 @@ type GuardConfig struct {
 	BlockedMessagePatterns  []string
 	TelemetryHighRiskTags   []string
 	TelemetryAction         string
+	EDRTelemetryPath        string
+	EDRTelemetryMaxAgeSecs  int
+	EDRTelemetryRiskBonus   int
 	CredentialSensitiveKeys []string
 	CredentialLeakAction    string
+	AttestationExpectedSHA  string
+	AttestationReportPath   string
+	AttestationMismatchRisk int
 	LoopGuardEnabled        bool
 	LoopGuardWindowMS       int
 	LoopGuardMaxHits        int
@@ -45,6 +55,27 @@ type toolPolicyMatcher struct {
 	action  Action
 }
 
+type telemetryAlert struct {
+	Reason string
+	Tag    string
+	Risk   int
+}
+
+type telemetryCache struct {
+	checkedAt time.Time
+	alert     *telemetryAlert
+}
+
+type attestationSnapshot struct {
+	ExecutablePath  string `json:"executablePath"`
+	ExecutableSHA   string `json:"executableSha256"`
+	ExpectedSHA     string `json:"expectedSha256,omitempty"`
+	Verified        bool   `json:"verified"`
+	StartedAtMS     int64  `json:"startedAtMs"`
+	ReportWritePath string `json:"reportPath,omitempty"`
+	Error           string `json:"error,omitempty"`
+}
+
 type Guard struct {
 	defaultAction    Action
 	toolPolicies     map[string]Action
@@ -52,8 +83,15 @@ type Guard struct {
 	blockedPhrases   []string
 	telemetryTags    map[string]struct{}
 	telemetryAction  Action
+	telemetryPath    string
+	telemetryMaxAge  time.Duration
+	telemetryRisk    int
+	telemetryCache   telemetryCache
+	telemetryMu      sync.Mutex
 	sensitiveKeys    map[string]struct{}
 	credentialAction Action
+	attestation      attestationSnapshot
+	attestationRisk  int
 	riskReviewAt     int
 	riskBlockAt      int
 	loopGuard        *ToolLoopGuard
@@ -115,8 +153,13 @@ func NewGuard(cfg GuardConfig) *Guard {
 		blockedPhrases:   normalizePhrases(cfg.BlockedMessagePatterns),
 		telemetryTags:    normalizeSet(cfg.TelemetryHighRiskTags),
 		telemetryAction:  parseAction(cfg.TelemetryAction),
+		telemetryPath:    strings.TrimSpace(cfg.EDRTelemetryPath),
+		telemetryMaxAge:  time.Duration(maxInt(cfg.EDRTelemetryMaxAgeSecs, 1)) * time.Second,
+		telemetryRisk:    normalizeThreshold(cfg.EDRTelemetryRiskBonus, 45),
+		telemetryCache:   telemetryCache{},
 		sensitiveKeys:    normalizeSet(cfg.CredentialSensitiveKeys),
 		credentialAction: parseAction(cfg.CredentialLeakAction),
+		attestationRisk:  normalizeThreshold(cfg.AttestationMismatchRisk, 55),
 		riskReviewAt:     normalizeThreshold(cfg.RiskReviewThreshold, 70),
 		riskBlockAt:      normalizeThreshold(cfg.RiskBlockThreshold, 90),
 		loopGuard:        NewToolLoopGuard(time.Duration(cfg.LoopGuardWindowMS)*time.Millisecond, cfg.LoopGuardMaxHits, cfg.LoopGuardEnabled),
@@ -138,6 +181,7 @@ func NewGuard(cfg GuardConfig) *Guard {
 		}
 		g.addToolPolicy(method, action)
 	}
+	g.attestation = buildAttestationSnapshot(strings.TrimSpace(cfg.AttestationExpectedSHA), strings.TrimSpace(cfg.AttestationReportPath))
 	g.loadBundle(cfg.PolicyBundlePath)
 	return g
 }
@@ -165,6 +209,27 @@ func (g *Guard) Evaluate(method string, params map[string]any) Decision {
 				"loop_guard:triggered",
 				"loop_guard:hits=" + intString(hits),
 			},
+		}
+	}
+
+	if !g.attestation.Verified {
+		riskScore = clampRisk(riskScore + maxInt(g.attestationRisk, 1))
+		signals = append(signals, "runtime_attestation_mismatch")
+		expected := strings.TrimSpace(g.attestation.ExpectedSHA)
+		if expected == "" {
+			expected = "unset-expected-sha256"
+		}
+		signals = append(signals, "attestation:expected="+expected)
+	}
+
+	if alert := g.recentTelemetryAlert(); alert != nil {
+		riskScore = clampRisk(riskScore + maxInt(alert.Risk, 1))
+		signals = append(signals, alert.Tag)
+		switch g.telemetryAction {
+		case ActionBlock:
+			return Decision{Action: ActionBlock, Reason: alert.Reason, RiskScore: riskScore, Signals: dedupeStrings(signals)}
+		case ActionReview:
+			return Decision{Action: ActionReview, Reason: alert.Reason, RiskScore: riskScore, Signals: dedupeStrings(signals)}
 		}
 	}
 
@@ -257,13 +322,19 @@ func (g *Guard) Snapshot() map[string]any {
 		toolPolicies[matcher.pattern] = string(matcher.action)
 	}
 	return map[string]any{
-		"defaultAction":           g.defaultAction,
-		"toolPolicies":            toolPolicies,
-		"blockedPatterns":         g.blockedPhrases,
-		"telemetryAction":         g.telemetryAction,
-		"telemetryTags":           keys(g.telemetryTags),
+		"defaultAction":   g.defaultAction,
+		"toolPolicies":    toolPolicies,
+		"blockedPatterns": g.blockedPhrases,
+		"telemetryAction": g.telemetryAction,
+		"telemetryTags":   keys(g.telemetryTags),
+		"telemetryFeed": map[string]any{
+			"path":          g.telemetryPath,
+			"maxAgeSeconds": int(g.telemetryMaxAge / time.Second),
+			"riskBonus":     g.telemetryRisk,
+		},
 		"credentialLeakAction":    g.credentialAction,
 		"credentialSensitiveKeys": keys(g.sensitiveKeys),
+		"attestation":             g.attestation,
 		"riskReviewThreshold":     g.riskReviewAt,
 		"riskBlockThreshold":      g.riskBlockAt,
 		"loopGuard":               g.loopGuard.Snapshot(),
@@ -359,6 +430,230 @@ func (g *Guard) containsCredentialLeak(params map[string]any) bool {
 		return false
 	}
 	return walkParamsForSensitive(params, g.sensitiveKeys)
+}
+
+func (g *Guard) recentTelemetryAlert() *telemetryAlert {
+	if strings.TrimSpace(g.telemetryPath) == "" {
+		return nil
+	}
+	now := time.Now().UTC()
+
+	g.telemetryMu.Lock()
+	if !g.telemetryCache.checkedAt.IsZero() && now.Sub(g.telemetryCache.checkedAt) < 2*time.Second {
+		cached := g.telemetryCache.alert
+		g.telemetryMu.Unlock()
+		return cached
+	}
+	g.telemetryMu.Unlock()
+
+	raw, err := os.ReadFile(g.telemetryPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			g.telemetryMu.Lock()
+			g.telemetryCache.checkedAt = now
+			g.telemetryCache.alert = nil
+			g.telemetryMu.Unlock()
+			return nil
+		}
+		g.lastError = err.Error()
+		g.telemetryMu.Lock()
+		g.telemetryCache.checkedAt = now
+		g.telemetryCache.alert = nil
+		g.telemetryMu.Unlock()
+		return nil
+	}
+
+	clip := raw
+	const maxBytes = 2 * 1024 * 1024
+	if len(clip) > maxBytes {
+		clip = clip[len(clip)-maxBytes:]
+	}
+
+	lines := strings.Split(string(clip), "\n")
+	scanned := 0
+	var found *telemetryAlert
+	for i := len(lines) - 1; i >= 0; i-- {
+		if scanned >= 256 {
+			break
+		}
+		scanned++
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(line), &payload); err != nil {
+			continue
+		}
+		if !g.telemetryEventRecent(payload, now) {
+			continue
+		}
+		alert := g.classifyTelemetryPayload(payload)
+		if alert != nil {
+			found = alert
+			break
+		}
+	}
+
+	g.telemetryMu.Lock()
+	g.telemetryCache.checkedAt = now
+	g.telemetryCache.alert = found
+	g.telemetryMu.Unlock()
+	return found
+}
+
+func (g *Guard) telemetryEventRecent(payload map[string]any, now time.Time) bool {
+	timestamp := now
+	if value := firstTimeField(payload, "observedAtMs", "observed_at_ms", "timestampMs", "timestamp_ms", "ts"); !value.IsZero() {
+		timestamp = value
+	}
+	return now.Sub(timestamp) <= g.telemetryMaxAge
+}
+
+func (g *Guard) classifyTelemetryPayload(payload map[string]any) *telemetryAlert {
+	severity := strings.ToLower(strings.TrimSpace(firstStringField(payload, "severity", "level")))
+	highSeverity := severity == "critical" || severity == "high" || severity == "severe" || severity == "emergency"
+	highTag := ""
+	for _, tag := range flattenStrings(payload["tags"]) {
+		normalized := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(tag, " ", "_")))
+		if _, ok := g.telemetryTags[normalized]; ok {
+			highTag = normalized
+			break
+		}
+	}
+	blocked := boolField(payload, "blocked", "quarantined")
+	if !highSeverity && highTag == "" && !blocked {
+		return nil
+	}
+
+	reason := ""
+	switch {
+	case highTag != "":
+		reason = "telemetry high-risk tag detected: " + highTag
+	case highSeverity:
+		reason = "telemetry severity detected: " + severity
+	default:
+		reason = "telemetry event indicates blocked/quarantined host activity"
+	}
+	return &telemetryAlert{
+		Reason: reason,
+		Tag:    "edr_telemetry_alert",
+		Risk:   maxInt(g.telemetryRisk, 1),
+	}
+}
+
+func buildAttestationSnapshot(expectedSHA string, reportPath string) attestationSnapshot {
+	snapshot := attestationSnapshot{
+		ExpectedSHA: strings.ToLower(strings.TrimSpace(expectedSHA)),
+		Verified:    true,
+		StartedAtMS: time.Now().UTC().UnixMilli(),
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		snapshot.Error = err.Error()
+		snapshot.Verified = snapshot.ExpectedSHA == ""
+		return snapshot
+	}
+	snapshot.ExecutablePath = exePath
+	snapshot.ExecutableSHA, err = fileSHA256(exePath)
+	if err != nil {
+		snapshot.Error = err.Error()
+		snapshot.Verified = snapshot.ExpectedSHA == ""
+	} else if snapshot.ExpectedSHA != "" {
+		snapshot.Verified = strings.EqualFold(snapshot.ExpectedSHA, snapshot.ExecutableSHA)
+	}
+
+	reportPath = strings.TrimSpace(reportPath)
+	if reportPath != "" {
+		snapshot.ReportWritePath = reportPath
+		if err := os.MkdirAll(filepath.Dir(reportPath), 0o755); err == nil {
+			if payload, err := json.MarshalIndent(snapshot, "", "  "); err == nil {
+				_ = os.WriteFile(reportPath, payload, 0o644)
+			}
+		}
+	}
+	return snapshot
+}
+
+func fileSHA256(path string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func firstStringField(payload map[string]any, keys ...string) string {
+	for _, key := range keys {
+		raw, ok := payload[key]
+		if !ok {
+			continue
+		}
+		if value, ok := raw.(string); ok {
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
+}
+
+func firstTimeField(payload map[string]any, keys ...string) time.Time {
+	for _, key := range keys {
+		raw, ok := payload[key]
+		if !ok {
+			continue
+		}
+		switch value := raw.(type) {
+		case float64:
+			if value <= 0 {
+				continue
+			}
+			return time.UnixMilli(int64(value)).UTC()
+		case int64:
+			if value <= 0 {
+				continue
+			}
+			return time.UnixMilli(value).UTC()
+		case int:
+			if value <= 0 {
+				continue
+			}
+			return time.UnixMilli(int64(value)).UTC()
+		case string:
+			trimmed := strings.TrimSpace(value)
+			if trimmed == "" {
+				continue
+			}
+			if parsed, err := strconv.ParseInt(trimmed, 10, 64); err == nil && parsed > 0 {
+				return time.UnixMilli(parsed).UTC()
+			}
+		}
+	}
+	return time.Time{}
+}
+
+func boolField(payload map[string]any, keys ...string) bool {
+	for _, key := range keys {
+		raw, ok := payload[key]
+		if !ok {
+			continue
+		}
+		switch value := raw.(type) {
+		case bool:
+			if value {
+				return true
+			}
+		case string:
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "1", "true", "yes", "on":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func walkParamsForSensitive(input any, sensitiveKeys map[string]struct{}) bool {
@@ -545,6 +840,16 @@ func maxInt(a int, b int) int {
 		return a
 	}
 	return b
+}
+
+func clampRisk(v int) int {
+	if v < 0 {
+		return 0
+	}
+	if v > 100 {
+		return 100
+	}
+	return v
 }
 
 func dedupeStrings(items []string) []string {

@@ -91,6 +91,32 @@ func (e *edgeState) issueEnclaveProof(challenge string) map[string]any {
 	return proof
 }
 
+func (e *edgeState) recordEnclaveProof(challenge string, proofValue string, issuedAt string) map[string]any {
+	challenge = strings.TrimSpace(challenge)
+	if challenge == "" {
+		challenge = "default-challenge"
+	}
+	if strings.TrimSpace(issuedAt) == "" {
+		issuedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	if strings.TrimSpace(proofValue) == "" {
+		hashInput := []byte(challenge + "|" + issuedAt)
+		digest := sha256.Sum256(hashInput)
+		proofValue = "enclave-proof-" + hex.EncodeToString(digest[:12])
+	}
+	proof := map[string]any{
+		"challenge": challenge,
+		"proof":     proofValue,
+		"issuedAt":  issuedAt,
+	}
+
+	e.mu.Lock()
+	e.enclaveProofCount++
+	e.lastEnclaveProof = cloneMap(proof)
+	e.mu.Unlock()
+	return proof
+}
+
 func (e *edgeState) enclaveStatus() map[string]any {
 	e.mu.RLock()
 	defer e.mu.RUnlock()

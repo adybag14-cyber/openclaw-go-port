@@ -13,6 +13,7 @@ import (
 	osexec "os/exec"
 	"path/filepath"
 	stdruntime "runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,8 +93,14 @@ func New(cfg config.Config, build buildinfo.Info) *Server {
 			BlockedMessagePatterns:  cfg.Security.BlockedMessagePatterns,
 			TelemetryHighRiskTags:   cfg.Security.TelemetryHighRiskTags,
 			TelemetryAction:         cfg.Security.TelemetryAction,
+			EDRTelemetryPath:        cfg.Security.EDRTelemetryPath,
+			EDRTelemetryMaxAgeSecs:  cfg.Security.EDRTelemetryMaxAgeSecs,
+			EDRTelemetryRiskBonus:   cfg.Security.EDRTelemetryRiskBonus,
 			CredentialSensitiveKeys: cfg.Security.CredentialSensitiveKeys,
 			CredentialLeakAction:    cfg.Security.CredentialLeakAction,
+			AttestationExpectedSHA:  cfg.Security.AttestationExpectedSHA,
+			AttestationReportPath:   cfg.Security.AttestationReportPath,
+			AttestationMismatchRisk: cfg.Security.AttestationMismatchRisk,
 			LoopGuardEnabled:        cfg.Security.LoopGuardEnabled,
 			LoopGuardWindowMS:       cfg.Security.LoopGuardWindowMS,
 			LoopGuardMaxHits:        cfg.Security.LoopGuardMaxHits,
@@ -1144,28 +1151,33 @@ func (s *Server) handleEdgeEnclaveProve(params map[string]any) map[string]any {
 	if nonce == "" {
 		nonce = fmt.Sprintf("nonce-%d", time.Now().UTC().UnixMilli())
 	}
-	proof := s.edge.issueEnclaveProof(statement)
+	activeMode := "simulated-enclave"
+	signals := map[string]any{
+		"sgx": envTruthy("OPENCLAW_GO_ENCLAVE_SGX"),
+		"tpm": true,
+		"sev": envTruthy("OPENCLAW_GO_ENCLAVE_SEV"),
+	}
+	record := buildEdgeEnclaveProofRecord(statement, nonce, activeMode, runtimeProfileName(s.cfg.Runtime.Profile), signals)
+	proof := s.edge.recordEnclaveProof(statement, toString(record["proof"], ""), toString(record["generatedAt"], ""))
+
 	statementDigest := sha256.Sum256([]byte(statement))
-	record := cloneMap(proof)
-	record["nonce"] = nonce
-	record["statementHash"] = hex.EncodeToString(statementDigest[:])
 	return map[string]any{
 		"runtimeProfile":    runtimeProfileName(s.cfg.Runtime.Profile),
-		"activeMode":        "simulated-enclave",
+		"activeMode":        activeMode,
 		"challenge":         statement,
-		"statementHash":     record["statementHash"],
+		"statementHash":     valueOrDefault(toString(record["statementHash"], ""), hex.EncodeToString(statementDigest[:])),
 		"nonce":             nonce,
 		"proof":             proof["proof"],
-		"scheme":            "attestation-quote-v1",
-		"verified":          true,
-		"source":            "local-attestation",
-		"quote":             fmt.Sprintf("quote-%d", time.Now().UTC().UnixMilli()),
-		"measurement":       fmt.Sprintf("mr-enclave-%s", hex.EncodeToString(statementDigest[:8])),
-		"error":             nil,
-		"attestationBinary": valueOrNil(strings.TrimSpace(os.Getenv("OPENCLAW_GO_ENCLAVE_ATTEST_BIN"))),
+		"scheme":            valueOrDefault(toString(record["scheme"], ""), "sha256-commitment-v1"),
+		"verified":          toBool(record["verified"], false),
+		"source":            valueOrDefault(toString(record["source"], ""), "deterministic-fallback"),
+		"quote":             valueOrNil(toString(record["quote"], "")),
+		"measurement":       valueOrDefault(toString(record["measurement"], ""), fmt.Sprintf("mr-enclave-%s", hex.EncodeToString(statementDigest[:8]))),
+		"error":             valueOrNil(toString(record["error"], "")),
+		"attestationBinary": valueOrNil(toString(record["attestationBinary"], strings.TrimSpace(os.Getenv("OPENCLAW_GO_ENCLAVE_ATTEST_BIN")))),
 		"verification": map[string]any{
 			"deterministic": true,
-			"attested":      true,
+			"attested":      toBool(record["verified"], false),
 			"inputs":        []string{"statement", "nonce", "activeMode", "runtimeProfile"},
 		},
 		"record":   record,
@@ -1442,38 +1454,68 @@ func (s *Server) handleEdgeFinetuneRun(ctx context.Context, params map[string]an
 		maxSamples = 128
 	}
 	dryRun := toBool(params["dryRun"], true)
+	autoIngestMemory := toBool(params["autoIngestMemory"], true)
+	datasetPath := normalizeOptionalText(firstNonEmptyValue(params, "datasetPath", "dataset"), 2_048)
 	outputPath := normalizeOptionalText(firstNonEmptyValue(params, "outputPath"), 1024)
 	if outputPath == "" {
 		outputPath = fmt.Sprintf(".openclaw-go/evolution/adapters/%s", adapterName)
 	}
 	manifestPath := filepath.Join(outputPath, "manifest.json")
+	memoryStats := s.memory.Stats()
+	if datasetPath == "" && !autoIngestMemory && toInt(memoryStats["vectors"], 0) == 0 && toInt(memoryStats["graphNodes"], 0) == 0 {
+		return nil, &dispatchError{
+			Code:    -32602,
+			Message: "edge.finetune.run requires datasetPath or autoIngestMemory=true with memory data",
+		}
+	}
+
+	trainerBinary := edgeLoraTrainerBinaryPath()
+	trainerArgs := edgeLoraTrainerArgs()
+	timeoutMs := edgeLoraTrainerTimeoutMs()
+	if !dryRun && trainerBinary == "" {
+		return nil, &dispatchError{
+			Code:    -32602,
+			Message: "edge.finetune.run requires OPENCLAW_GO_LORA_TRAINER_BIN when dryRun=false",
+		}
+	}
 
 	result, err := s.routines.Run(ctx, "edge-wasm-smoke", params)
-	jobStatus := "completed"
 	if err != nil {
-		jobStatus = "failed"
-		job := s.edge.addFinetuneJob(params, jobStatus)
+		job := s.edge.addFinetuneJob(params, "failed")
 		return nil, &dispatchError{
 			Code:    -32060,
 			Message: fmt.Sprintf("%s (job=%s)", err.Error(), toString(job["id"], "")),
 		}
 	}
-	job := s.edge.addFinetuneJob(params, jobStatus)
-	job["runtime"] = result
-	job["adapterName"] = adapterName
-	job["outputPath"] = outputPath
-	job["dryRun"] = dryRun
-	job["baseModel"] = map[string]any{
-		"provider": baseProvider,
-		"id":       baseModel,
+
+	commandArgs := make([]string, 0, len(trainerArgs)+16)
+	commandArgs = append(commandArgs, trainerArgs...)
+	commandArgs = append(commandArgs,
+		"--model", baseModel,
+		"--provider", baseProvider,
+		"--adapter", adapterName,
+		"--rank", fmt.Sprintf("%d", rank),
+		"--epochs", fmt.Sprintf("%d", epochs),
+		"--lr", fmt.Sprintf("%.6f", learningRate),
+		"--max-samples", fmt.Sprintf("%d", maxSamples),
+		"--output", outputPath,
+	)
+	if datasetPath != "" {
+		commandArgs = append(commandArgs, "--dataset", datasetPath)
 	}
-	jobID := toString(job["id"], fmt.Sprintf("finetune-%d", time.Now().UTC().UnixMilli()))
+
+	jobID := fmt.Sprintf("finetune-%d", time.Now().UTC().UnixMilli())
 	manifest := map[string]any{
 		"jobId":            jobID,
 		"createdAtMs":      time.Now().UTC().UnixMilli(),
 		"runtimeProfile":   runtimeProfileName(s.cfg.Runtime.Profile),
 		"dryRun":           dryRun,
-		"autoIngestMemory": toBool(params["autoIngestMemory"], true),
+		"autoIngestMemory": autoIngestMemory,
+		"memorySnapshot": map[string]any{
+			"zvecEntries": toInt(memoryStats["vectors"], 0),
+			"graphNodes":  toInt(memoryStats["graphNodes"], 0),
+			"graphEdges":  toInt(memoryStats["graphEdges"], 0),
+		},
 		"baseModel": map[string]any{
 			"provider": baseProvider,
 			"id":       baseModel,
@@ -1490,37 +1532,93 @@ func (s *Server) handleEdgeFinetuneRun(ctx context.Context, params map[string]an
 			"maxSamples":   maxSamples,
 		},
 		"dataset": map[string]any{
-			"path":             valueOrNil(firstNonEmptyValue(params, "datasetPath", "dataset")),
-			"autoIngestMemory": toBool(params["autoIngestMemory"], true),
+			"path":             valueOrNil(datasetPath),
+			"autoIngestMemory": autoIngestMemory,
 		},
 		"suggestedCommand": map[string]any{
-			"binary": valueOrNil(strings.TrimSpace(os.Getenv("OPENCLAW_GO_LORA_TRAINER_BIN"))),
-			"argv": []string{
-				"--model", baseModel,
-				"--provider", baseProvider,
-				"--adapter", adapterName,
-				"--rank", fmt.Sprintf("%d", rank),
-				"--epochs", fmt.Sprintf("%d", epochs),
-				"--lr", fmt.Sprintf("%.6f", learningRate),
-				"--max-samples", fmt.Sprintf("%d", maxSamples),
-				"--output", outputPath,
-			},
-			"timeoutMs": 600000,
+			"binary":    valueOrNil(trainerBinary),
+			"argv":      commandArgs,
+			"timeoutMs": timeoutMs,
 		},
 	}
+
+	if !dryRun {
+		if err := os.MkdirAll(outputPath, 0o755); err != nil {
+			return nil, &dispatchError{
+				Code:    -32060,
+				Message: fmt.Sprintf("edge.finetune.run failed to create output path: %v", err),
+			}
+		}
+		encoded, marshalErr := json.MarshalIndent(manifest, "", "  ")
+		if marshalErr != nil {
+			return nil, &dispatchError{
+				Code:    -32060,
+				Message: fmt.Sprintf("edge.finetune.run failed to encode manifest: %v", marshalErr),
+			}
+		}
+		if writeErr := os.WriteFile(manifestPath, encoded, 0o644); writeErr != nil {
+			return nil, &dispatchError{
+				Code:    -32060,
+				Message: fmt.Sprintf("edge.finetune.run failed to write manifest: %v", writeErr),
+			}
+		}
+	}
+
 	execution := map[string]any{
-		"attempted": !dryRun,
-		"success":   err == nil,
+		"attempted": false,
+		"success":   true,
 		"timedOut":  false,
-		"timeoutMs": 600000,
-		"binary":    valueOrNil(strings.TrimSpace(os.Getenv("OPENCLAW_GO_LORA_TRAINER_BIN"))),
-		"argv":      manifest["suggestedCommand"].(map[string]any)["argv"],
-		"exitCode":  valueOrNil("0"),
+		"timeoutMs": timeoutMs,
+		"binary":    valueOrNil(trainerBinary),
+		"argv":      commandArgs,
+		"exitCode":  nil,
 		"error":     nil,
 		"logTail":   []string{},
 	}
+	jobStatus := "completed"
+	if !dryRun {
+		runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+		defer cancel()
+		cmd := osexec.CommandContext(runCtx, trainerBinary, commandArgs...)
+		output, runErr := cmd.CombinedOutput()
+		logTail := collectCommandLogTail(string(output), 14, 320)
+		timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
+		success := runErr == nil && !timedOut
+		exitCode := any(nil)
+		if cmd.ProcessState != nil {
+			exitCode = cmd.ProcessState.ExitCode()
+		}
+		execution["attempted"] = true
+		execution["success"] = success
+		execution["timedOut"] = timedOut
+		execution["exitCode"] = exitCode
+		execution["logTail"] = logTail
+		if runErr != nil {
+			execution["error"] = runErr.Error()
+		}
+		if timedOut {
+			jobStatus = "timeout"
+		} else if !success {
+			jobStatus = "failed"
+		}
+	}
+
+	job := s.edge.addFinetuneJob(params, jobStatus)
+	job["id"] = jobID
+	job["runtime"] = result
+	job["adapterName"] = adapterName
+	job["outputPath"] = outputPath
+	job["dryRun"] = dryRun
+	job["baseModel"] = map[string]any{
+		"provider": baseProvider,
+		"id":       baseModel,
+	}
+	job["execution"] = cloneMap(execution)
+	job["manifestPath"] = manifestPath
+	job["status"] = jobStatus
+
 	return map[string]any{
-		"ok":             true,
+		"ok":             toBool(execution["success"], false),
 		"jobId":          jobID,
 		"runtimeProfile": runtimeProfileName(s.cfg.Runtime.Profile),
 		"dryRun":         dryRun,
@@ -1909,25 +2007,23 @@ func (s *Server) handleEdgeVoiceTranscribe(params map[string]any) (map[string]an
 		}
 	}
 
-	providerUsed := providerRequested
-	if providerUsed == "" {
-		providerUsed = "edge"
-	}
-	transcript := simulatedTranscript(audioPath, hintText)
-	confidence := 0.46
-	if hintText != "" {
-		confidence = 0.9
-	}
+	result := transcribeAudioWithProvider(
+		valueOrNilString(audioPath),
+		valueOrNilString(hintText),
+		valueOrNilString(language),
+		providerRequested,
+		runtimeProfileName(s.cfg.Runtime.Profile),
+	)
 
 	return map[string]any{
 		"runtimeProfile":       runtimeProfileName(s.cfg.Runtime.Profile),
 		"providerRequested":    valueOrNil(providerRequested),
-		"providerUsed":         providerUsed,
-		"source":               "simulated",
+		"providerUsed":         result.ProviderUsed,
+		"source":               result.Source,
 		"audioPath":            valueOrNil(audioPath),
 		"audioRef":             valueOrDefault(audioPath, "memory://audio"),
-		"transcript":           transcript,
-		"confidence":           confidence,
+		"transcript":           result.Transcript,
+		"confidence":           result.Confidence,
 		"language":             valueOrNil(language),
 		"hasTinyWhisperBinary": tinyWhisperBinaryAvailable(),
 	}, nil
@@ -2240,9 +2336,313 @@ func simulatedTranscript(audioPath string, hintText string) string {
 	return "simulated transcript"
 }
 
+type edgeTranscriptionResult struct {
+	ProviderUsed string
+	Source       string
+	Transcript   string
+	Confidence   float64
+}
+
+func transcribeAudioWithProvider(audioPath string, hintText string, language string, requestedProvider string, profile string) edgeTranscriptionResult {
+	requested := strings.ToLower(strings.TrimSpace(requestedProvider))
+	order := make([]string, 0, 4)
+	if requested != "" {
+		order = append(order, requested)
+	}
+	switch strings.ToLower(strings.TrimSpace(profile)) {
+	case "edge":
+		if !slicesContains(order, "tinywhisper") {
+			order = append(order, "tinywhisper")
+		}
+		if !slicesContains(order, "edge") {
+			order = append(order, "edge")
+		}
+	default:
+		if !slicesContains(order, "edge") {
+			order = append(order, "edge")
+		}
+		if !slicesContains(order, "tinywhisper") {
+			order = append(order, "tinywhisper")
+		}
+	}
+
+	for _, provider := range order {
+		switch provider {
+		case "tinywhisper":
+			if strings.TrimSpace(audioPath) == "" {
+				continue
+			}
+			if transcript, ok := tryTranscribeAudioTinyWhisper(audioPath, language); ok {
+				return edgeTranscriptionResult{
+					ProviderUsed: "tinywhisper",
+					Source:       "offline-local",
+					Transcript:   transcript,
+					Confidence:   0.92,
+				}
+			}
+		case "edge":
+			transcript := simulatedTranscript(audioPath, hintText)
+			confidence := 0.46
+			if strings.TrimSpace(hintText) != "" {
+				confidence = 0.9
+			}
+			return edgeTranscriptionResult{
+				ProviderUsed: "edge",
+				Source:       "simulated",
+				Transcript:   transcript,
+				Confidence:   confidence,
+			}
+		}
+	}
+
+	providerUsed := requested
+	if providerUsed == "" {
+		providerUsed = "edge"
+	}
+	return edgeTranscriptionResult{
+		ProviderUsed: providerUsed,
+		Source:       "simulated",
+		Transcript:   simulatedTranscript(audioPath, hintText),
+		Confidence:   0.4,
+	}
+}
+
+func tinyWhisperBinaryPath() string {
+	if bin := normalizeOptionalText(strings.TrimSpace(os.Getenv("OPENCLAW_GO_TINYWHISPER_BIN")), 2048); bin != "" {
+		return bin
+	}
+	if path, err := osexec.LookPath("tinywhisper"); err == nil {
+		return path
+	}
+	return ""
+}
+
+func tinyWhisperExtraArgs() []string {
+	raw := normalizeOptionalText(strings.TrimSpace(os.Getenv("OPENCLAW_GO_TINYWHISPER_ARGS")), 2048)
+	if raw == "" {
+		return []string{}
+	}
+	parts := strings.Fields(raw)
+	if len(parts) > 32 {
+		parts = parts[:32]
+	}
+	return parts
+}
+
+func tryTranscribeAudioTinyWhisper(audioPath string, language string) (string, bool) {
+	binary := tinyWhisperBinaryPath()
+	if binary == "" {
+		return "", false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	args := []string{"--input", audioPath}
+	if normalizedLanguage := normalizeOptionalText(language, 32); normalizedLanguage != "" {
+		args = append(args, "--language", normalizedLanguage)
+	}
+	args = append(args, tinyWhisperExtraArgs()...)
+	cmd := osexec.CommandContext(ctx, binary, args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		if normalized := normalizeOptionalText(line, 16_000); normalized != "" {
+			return normalized, true
+		}
+	}
+	return "", false
+}
+
 func tinyWhisperBinaryAvailable() bool {
-	_, err := osexec.LookPath("tinywhisper")
-	return err == nil
+	return strings.TrimSpace(tinyWhisperBinaryPath()) != ""
+}
+
+func edgeEnclaveAttestationBinaryPath() string {
+	return normalizeOptionalText(strings.TrimSpace(os.Getenv("OPENCLAW_GO_ENCLAVE_ATTEST_BIN")), 2048)
+}
+
+func edgeEnclaveAttestationArgs() []string {
+	raw := normalizeOptionalText(strings.TrimSpace(os.Getenv("OPENCLAW_GO_ENCLAVE_ATTEST_ARGS")), 2048)
+	if raw == "" {
+		return []string{}
+	}
+	parts := strings.Fields(raw)
+	if len(parts) > 48 {
+		parts = parts[:48]
+	}
+	return parts
+}
+
+func edgeEnclaveAttestationTimeoutMs() int {
+	raw := normalizeOptionalText(strings.TrimSpace(os.Getenv("OPENCLAW_GO_ENCLAVE_ATTEST_TIMEOUT_MS")), 64)
+	if raw == "" {
+		return 15000
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return 15000
+	}
+	if parsed < 1000 {
+		return 1000
+	}
+	if parsed > 120000 {
+		return 120000
+	}
+	return parsed
+}
+
+func edgeLoraTrainerBinaryPath() string {
+	return normalizeOptionalText(strings.TrimSpace(os.Getenv("OPENCLAW_GO_LORA_TRAINER_BIN")), 2048)
+}
+
+func edgeLoraTrainerArgs() []string {
+	raw := normalizeOptionalText(strings.TrimSpace(os.Getenv("OPENCLAW_GO_LORA_TRAINER_ARGS")), 2048)
+	if raw == "" {
+		return []string{}
+	}
+	parts := strings.Fields(raw)
+	if len(parts) > 48 {
+		parts = parts[:48]
+	}
+	return parts
+}
+
+func edgeLoraTrainerTimeoutMs() int {
+	raw := normalizeOptionalText(strings.TrimSpace(os.Getenv("OPENCLAW_GO_LORA_TRAINER_TIMEOUT_MS")), 64)
+	if raw == "" {
+		return 600000
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return 600000
+	}
+	if parsed < 5000 {
+		return 5000
+	}
+	if parsed > 86400000 {
+		return 86400000
+	}
+	return parsed
+}
+
+func collectCommandLogTail(output string, maxLines int, maxChars int) []string {
+	lines := make([]string, 0, maxLines)
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		trimmed := normalizeOptionalText(line, maxChars)
+		if trimmed == "" {
+			continue
+		}
+		lines = append(lines, trimmed)
+	}
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	return lines
+}
+
+func valueOrNilString(value string) string {
+	return strings.TrimSpace(value)
+}
+
+func buildEdgeEnclaveProofRecord(statement string, nonce string, activeMode string, runtimeProfile string, signals map[string]any) map[string]any {
+	statementHash := sha256.Sum256([]byte(statement))
+	statementHashHex := hex.EncodeToString(statementHash[:])
+	baseSeed := fmt.Sprintf(
+		"zk-proof-v1|statement=%s|nonce=%s|mode=%s|profile=%s",
+		strings.TrimSpace(statement),
+		strings.TrimSpace(nonce),
+		strings.TrimSpace(activeMode),
+		strings.TrimSpace(runtimeProfile),
+	)
+	baseDigest := sha256.Sum256([]byte(baseSeed))
+	baseProof := hex.EncodeToString(baseDigest[:])
+
+	record := map[string]any{
+		"generatedAt":       time.Now().UTC().Format(time.RFC3339),
+		"activeMode":        activeMode,
+		"runtimeProfile":    runtimeProfile,
+		"statementHash":     statementHashHex,
+		"nonce":             nonce,
+		"proof":             baseProof,
+		"scheme":            "sha256-commitment-v1",
+		"verified":          false,
+		"source":            "deterministic-fallback",
+		"attestationBinary": valueOrNil(edgeEnclaveAttestationBinaryPath()),
+		"quote":             "",
+		"measurement":       statementHashHex,
+		"error":             "attestation binary not configured",
+	}
+
+	binary := edgeEnclaveAttestationBinaryPath()
+	if binary == "" {
+		return record
+	}
+
+	requestPayload := map[string]any{
+		"statement":      statement,
+		"statementHash":  statementHashHex,
+		"nonce":          nonce,
+		"activeMode":     activeMode,
+		"runtimeProfile": runtimeProfile,
+		"signals":        signals,
+	}
+	requestBytes, _ := json.Marshal(requestPayload)
+	timeout := edgeEnclaveAttestationTimeoutMs()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Millisecond)
+	defer cancel()
+
+	args := edgeEnclaveAttestationArgs()
+	cmd := osexec.CommandContext(ctx, binary, args...)
+	cmd.Stdin = strings.NewReader(string(requestBytes))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		record["error"] = err.Error()
+		return record
+	}
+
+	outputText := strings.TrimSpace(string(output))
+	if outputText == "" {
+		record["error"] = "attestation command returned empty output"
+		return record
+	}
+
+	parsed := map[string]any{}
+	if json.Unmarshal(output, &parsed) == nil {
+		quote := firstNonEmptyValue(parsed, "quote", "evidence", "attestationQuote", "rawQuote")
+		measurement := firstNonEmptyValue(parsed, "measurement", "reportDigest", "mrEnclave", "mr", "digest")
+		if quote == "" {
+			quote = outputText
+		}
+		if measurement == "" {
+			digest := sha256.Sum256([]byte(quote))
+			measurement = hex.EncodeToString(digest[:])
+		}
+		finalSeed := fmt.Sprintf("edge-attestation-proof-v1|base=%s|measurement=%s|nonce=%s", baseProof, measurement, nonce)
+		finalDigest := sha256.Sum256([]byte(finalSeed))
+		record["proof"] = hex.EncodeToString(finalDigest[:])
+		record["scheme"] = "attestation-quote-v1"
+		record["verified"] = true
+		record["source"] = "attestation-binary"
+		record["quote"] = quote
+		record["measurement"] = measurement
+		record["error"] = nil
+		return record
+	}
+
+	digest := sha256.Sum256([]byte(outputText))
+	measurement := hex.EncodeToString(digest[:])
+	finalSeed := fmt.Sprintf("edge-attestation-proof-v1|base=%s|measurement=%s|nonce=%s", baseProof, measurement, nonce)
+	finalDigest := sha256.Sum256([]byte(finalSeed))
+	record["proof"] = hex.EncodeToString(finalDigest[:])
+	record["scheme"] = "attestation-quote-v1"
+	record["verified"] = true
+	record["source"] = "attestation-binary"
+	record["quote"] = outputText
+	record["measurement"] = measurement
+	record["error"] = nil
+	return record
 }
 
 func envTruthy(key string) bool {

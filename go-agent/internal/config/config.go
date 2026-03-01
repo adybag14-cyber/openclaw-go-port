@@ -77,8 +77,14 @@ type SecurityConfig struct {
 	BlockedMessagePatterns  []string          `toml:"blocked_message_patterns"`
 	TelemetryHighRiskTags   []string          `toml:"telemetry_high_risk_tags"`
 	TelemetryAction         string            `toml:"telemetry_action"`
+	EDRTelemetryPath        string            `toml:"edr_telemetry_path"`
+	EDRTelemetryMaxAgeSecs  int               `toml:"edr_telemetry_max_age_secs"`
+	EDRTelemetryRiskBonus   int               `toml:"edr_telemetry_risk_bonus"`
 	CredentialSensitiveKeys []string          `toml:"credential_sensitive_keys"`
 	CredentialLeakAction    string            `toml:"credential_leak_action"`
+	AttestationExpectedSHA  string            `toml:"attestation_expected_sha256"`
+	AttestationReportPath   string            `toml:"attestation_report_path"`
+	AttestationMismatchRisk int               `toml:"attestation_mismatch_risk_bonus"`
 	LoopGuardEnabled        bool              `toml:"loop_guard_enabled"`
 	LoopGuardWindowMS       int               `toml:"loop_guard_window_ms"`
 	LoopGuardMaxHits        int               `toml:"loop_guard_max_hits"`
@@ -129,7 +135,10 @@ func Default() Config {
 				"behavior:ransomware",
 				"threat:critical",
 			},
-			TelemetryAction: "review",
+			TelemetryAction:        "review",
+			EDRTelemetryPath:       "",
+			EDRTelemetryMaxAgeSecs: 300,
+			EDRTelemetryRiskBonus:  45,
 			CredentialSensitiveKeys: []string{
 				"apiKey",
 				"api_key",
@@ -138,12 +147,15 @@ func Default() Config {
 				"secret",
 				"authorization",
 			},
-			CredentialLeakAction: "block",
-			LoopGuardEnabled:     true,
-			LoopGuardWindowMS:    5000,
-			LoopGuardMaxHits:     8,
-			RiskReviewThreshold:  70,
-			RiskBlockThreshold:   90,
+			CredentialLeakAction:    "block",
+			AttestationExpectedSHA:  "",
+			AttestationReportPath:   "",
+			AttestationMismatchRisk: 55,
+			LoopGuardEnabled:        true,
+			LoopGuardWindowMS:       5000,
+			LoopGuardMaxHits:        8,
+			RiskReviewThreshold:     70,
+			RiskBlockThreshold:      90,
 		},
 	}
 }
@@ -191,6 +203,12 @@ func applyEnvOverrides(cfg *Config) {
 	setIfPresent("OPENCLAW_GO_TELEGRAM_BOT_TOKEN", &cfg.Channels.Telegram.BotToken)
 	setIfPresent("OPENCLAW_GO_TELEGRAM_DEFAULT_TARGET", &cfg.Channels.Telegram.DefaultTarget)
 	setIfPresent("OPENCLAW_GO_POLICY_BUNDLE_PATH", &cfg.Security.PolicyBundlePath)
+	setIfPresent("OPENCLAW_GO_EDR_TELEMETRY_PATH", &cfg.Security.EDRTelemetryPath)
+	setIntIfPresent("OPENCLAW_GO_EDR_TELEMETRY_MAX_AGE_SECS", &cfg.Security.EDRTelemetryMaxAgeSecs)
+	setIntIfPresent("OPENCLAW_GO_EDR_TELEMETRY_RISK_BONUS", &cfg.Security.EDRTelemetryRiskBonus)
+	setIfPresent("OPENCLAW_GO_ATTESTATION_EXPECTED_SHA256", &cfg.Security.AttestationExpectedSHA)
+	setIfPresent("OPENCLAW_GO_ATTESTATION_REPORT_PATH", &cfg.Security.AttestationReportPath)
+	setIntIfPresent("OPENCLAW_GO_ATTESTATION_MISMATCH_RISK_BONUS", &cfg.Security.AttestationMismatchRisk)
 }
 
 func setIfPresent(env string, dest *string) {
@@ -278,6 +296,27 @@ func validate(cfg Config) error {
 	}
 	if strings.TrimSpace(cfg.Security.CredentialLeakAction) == "" {
 		return errors.New("security.credential_leak_action cannot be empty")
+	}
+	if cfg.Security.EDRTelemetryMaxAgeSecs <= 0 {
+		return errors.New("security.edr_telemetry_max_age_secs must be > 0")
+	}
+	if cfg.Security.EDRTelemetryRiskBonus <= 0 || cfg.Security.EDRTelemetryRiskBonus > 100 {
+		return errors.New("security.edr_telemetry_risk_bonus must be between 1 and 100")
+	}
+	if cfg.Security.AttestationMismatchRisk <= 0 || cfg.Security.AttestationMismatchRisk > 100 {
+		return errors.New("security.attestation_mismatch_risk_bonus must be between 1 and 100")
+	}
+	expectedSHA := strings.TrimSpace(cfg.Security.AttestationExpectedSHA)
+	if expectedSHA != "" {
+		normalized := strings.ToLower(expectedSHA)
+		if len(normalized) != 64 {
+			return errors.New("security.attestation_expected_sha256 must be a 64-character hex digest")
+		}
+		for _, ch := range normalized {
+			if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')) {
+				return errors.New("security.attestation_expected_sha256 must be a 64-character hex digest")
+			}
+		}
 	}
 	if cfg.Security.LoopGuardWindowMS < 0 {
 		return errors.New("security.loop_guard_window_ms cannot be negative")

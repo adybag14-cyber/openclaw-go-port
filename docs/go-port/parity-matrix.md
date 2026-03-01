@@ -43,3 +43,5 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 - Slice 5 complete: security audit remediation flow (`--security-audit --fix`) with persisted config fixes, policy bundle bootstrap, idempotency tests, and action-level fix reporting.
 - Slice 6 complete (Issue #5): websocket gateway parity (`/ws` request/response loop) and telegram control parity expansion (`/set api key`, `/auth providers|wait|bridge|help`, `/tts providers|help`) with integration tests.
 - Slice 7 complete (Issue #6): provider/account-scoped Telegram auth parity (`/auth start|status|wait|complete|cancel` scoped by provider/account/session) with backward-compatible short forms and integration coverage.
+- Slice 8 complete (Issue #6): security engine depth parity (EDR telemetry feed parsing/caching + runtime attestation mismatch scoring/reporting + config/env validation surfaces).
+- Slice 9 complete (Issue #6): edge runtime behavior depth (`tinywhisper` local STT execution path, attestation-binary enclave proof path, and non-dry-run finetune trainer execution/manifest contracts).

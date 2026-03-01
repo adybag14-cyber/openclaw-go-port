@@ -47,6 +47,15 @@ func TestLoadDefaultsWhenConfigMissing(t *testing.T) {
 	if cfg.Security.TelemetryAction != "review" {
 		t.Fatalf("unexpected default security.telemetry_action: %s", cfg.Security.TelemetryAction)
 	}
+	if cfg.Security.EDRTelemetryMaxAgeSecs <= 0 {
+		t.Fatalf("expected positive default security.edr_telemetry_max_age_secs")
+	}
+	if cfg.Security.EDRTelemetryRiskBonus <= 0 {
+		t.Fatalf("expected positive default security.edr_telemetry_risk_bonus")
+	}
+	if cfg.Security.AttestationMismatchRisk <= 0 {
+		t.Fatalf("expected positive default security.attestation_mismatch_risk_bonus")
+	}
 	if cfg.Security.CredentialLeakAction != "block" {
 		t.Fatalf("unexpected default security.credential_leak_action: %s", cfg.Security.CredentialLeakAction)
 	}
@@ -84,7 +93,11 @@ profile = "edge"
 [security]
 default_action = "review"
 telemetry_action = "block"
+edr_telemetry_max_age_secs = 60
+edr_telemetry_risk_bonus = 30
 credential_leak_action = "review"
+attestation_expected_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+attestation_mismatch_risk_bonus = 75
 policy_bundle_path = "tmp/policy-bundle.json"
 `
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -95,6 +108,12 @@ policy_bundle_path = "tmp/policy-bundle.json"
 	t.Setenv("OPENCLAW_GO_STATE_PATH", "tmp/override-state.json")
 	t.Setenv("OPENCLAW_GO_TELEGRAM_BOT_TOKEN", "tg-token")
 	t.Setenv("OPENCLAW_GO_POLICY_BUNDLE_PATH", "tmp/policy-from-env.json")
+	t.Setenv("OPENCLAW_GO_EDR_TELEMETRY_PATH", "tmp/edr-feed.jsonl")
+	t.Setenv("OPENCLAW_GO_EDR_TELEMETRY_MAX_AGE_SECS", "120")
+	t.Setenv("OPENCLAW_GO_EDR_TELEMETRY_RISK_BONUS", "44")
+	t.Setenv("OPENCLAW_GO_ATTESTATION_EXPECTED_SHA256", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	t.Setenv("OPENCLAW_GO_ATTESTATION_MISMATCH_RISK_BONUS", "65")
+	t.Setenv("OPENCLAW_GO_ATTESTATION_REPORT_PATH", "tmp/attestation-report.json")
 	t.Setenv("OPENCLAW_GO_BROWSER_BRIDGE_ENABLED", "false")
 	t.Setenv("OPENCLAW_GO_BROWSER_BRIDGE_ENDPOINT", "http://127.0.0.1:43011")
 	t.Setenv("OPENCLAW_GO_BROWSER_BRIDGE_REQUEST_TIMEOUT_MS", "120000")
@@ -159,6 +178,24 @@ policy_bundle_path = "tmp/policy-bundle.json"
 	if cfg.Security.TelemetryAction != "block" {
 		t.Fatalf("security.telemetry_action expected block")
 	}
+	if cfg.Security.EDRTelemetryPath != "tmp/edr-feed.jsonl" {
+		t.Fatalf("security.edr_telemetry_path override not applied: %s", cfg.Security.EDRTelemetryPath)
+	}
+	if cfg.Security.EDRTelemetryMaxAgeSecs != 120 {
+		t.Fatalf("security.edr_telemetry_max_age_secs override not applied: %d", cfg.Security.EDRTelemetryMaxAgeSecs)
+	}
+	if cfg.Security.EDRTelemetryRiskBonus != 44 {
+		t.Fatalf("security.edr_telemetry_risk_bonus override not applied: %d", cfg.Security.EDRTelemetryRiskBonus)
+	}
+	if cfg.Security.AttestationExpectedSHA != "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" {
+		t.Fatalf("security.attestation_expected_sha256 override not applied")
+	}
+	if cfg.Security.AttestationMismatchRisk != 65 {
+		t.Fatalf("security.attestation_mismatch_risk_bonus override not applied: %d", cfg.Security.AttestationMismatchRisk)
+	}
+	if cfg.Security.AttestationReportPath != "tmp/attestation-report.json" {
+		t.Fatalf("security.attestation_report_path override not applied: %s", cfg.Security.AttestationReportPath)
+	}
 	if cfg.Security.CredentialLeakAction != "review" {
 		t.Fatalf("security.credential_leak_action expected review")
 	}
@@ -212,5 +249,21 @@ request_timeout_ms = 0
 	_, err := Load(path)
 	if err == nil {
 		t.Fatalf("expected browser bridge validation error")
+	}
+}
+
+func TestAttestationDigestValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "openclaw-go.toml")
+	content := `
+[security]
+attestation_expected_sha256 = "not-a-sha"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed writing test config: %v", err)
+	}
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatalf("expected attestation digest validation error")
 	}
 }
