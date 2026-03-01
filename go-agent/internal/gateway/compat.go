@@ -65,6 +65,9 @@ type compatState struct {
 	pendingApprovals  map[string]map[string]any
 	configOverlay     map[string]any
 	sessionTombstones map[string]bool
+
+	updateSeq  int
+	updateJobs map[string]map[string]any
 }
 
 func newCompatState() *compatState {
@@ -149,6 +152,8 @@ func newCompatState() *compatState {
 		pendingApprovals:         map[string]map[string]any{},
 		configOverlay:            map[string]any{},
 		sessionTombstones:        map[string]bool{},
+		updateSeq:                0,
+		updateJobs:               map[string]map[string]any{},
 	}
 }
 
@@ -712,6 +717,110 @@ func (c *compatState) listEvents(limit int) []map[string]any {
 	return out
 }
 
+func (c *compatState) createUpdateJob(target string, dryRun bool, force bool, channel string) map[string]any {
+	c.mu.Lock()
+	c.updateSeq++
+	jobID := fmt.Sprintf("update-%06d", c.updateSeq)
+	now := time.Now().UTC().Format(time.RFC3339)
+	job := map[string]any{
+		"jobId":           jobID,
+		"status":          "queued",
+		"phase":           "queued",
+		"progress":        0,
+		"targetVersion":   target,
+		"requestedBy":     valueOrDefault(channel, "gateway"),
+		"dryRun":          dryRun,
+		"force":           force,
+		"startedAt":       now,
+		"updatedAt":       now,
+		"transitionCount": 0,
+	}
+	if dryRun {
+		job["status"] = "completed"
+		job["phase"] = "dry-run"
+		job["progress"] = 100
+		job["completedAt"] = now
+		job["transitionCount"] = 1
+	}
+	c.updateJobs[jobID] = cloneMap(job)
+	c.mu.Unlock()
+	return cloneMap(job)
+}
+
+func (c *compatState) updateUpdateJob(jobID string, status string, phase string, progress int, detail map[string]any) (map[string]any, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	job, ok := c.updateJobs[jobID]
+	if !ok {
+		return map[string]any{}, false
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	job["status"] = strings.TrimSpace(status)
+	job["phase"] = strings.TrimSpace(phase)
+	if progress < 0 {
+		progress = 0
+	}
+	if progress > 100 {
+		progress = 100
+	}
+	job["progress"] = progress
+	job["updatedAt"] = now
+	job["transitionCount"] = toInt(job["transitionCount"], 0) + 1
+	if detail != nil {
+		for key, value := range detail {
+			job[key] = value
+		}
+	}
+	c.updateJobs[jobID] = cloneMap(job)
+	return cloneMap(job), true
+}
+
+func (c *compatState) completeUpdateJob(jobID string, applied bool, releaseNotes []string) (map[string]any, bool) {
+	detail := map[string]any{
+		"applied":      applied,
+		"releaseNotes": append([]string(nil), releaseNotes...),
+		"completedAt":  time.Now().UTC().Format(time.RFC3339),
+	}
+	return c.updateUpdateJob(jobID, "completed", "finalize", 100, detail)
+}
+
+func (c *compatState) failUpdateJob(jobID string, reason string) (map[string]any, bool) {
+	detail := map[string]any{
+		"error":       strings.TrimSpace(reason),
+		"completedAt": time.Now().UTC().Format(time.RFC3339),
+	}
+	return c.updateUpdateJob(jobID, "failed", "failed", 100, detail)
+}
+
+func (c *compatState) getUpdateJob(jobID string) (map[string]any, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	job, ok := c.updateJobs[strings.TrimSpace(jobID)]
+	if !ok {
+		return map[string]any{}, false
+	}
+	return cloneMap(job), true
+}
+
+func (c *compatState) listUpdateJobs(limit int) []map[string]any {
+	if limit <= 0 {
+		limit = 20
+	}
+	c.mu.RLock()
+	items := make([]map[string]any, 0, len(c.updateJobs))
+	for _, job := range c.updateJobs {
+		items = append(items, cloneMap(job))
+	}
+	c.mu.RUnlock()
+	sort.Slice(items, func(i, j int) bool {
+		return toString(items[i]["startedAt"], "") < toString(items[j]["startedAt"], "")
+	})
+	if len(items) > limit {
+		items = items[len(items)-limit:]
+	}
+	return items
+}
+
 func cloneMap(input map[string]any) map[string]any {
 	if input == nil {
 		return map[string]any{}
@@ -857,13 +966,7 @@ func (s *Server) handleCompatMethod(ctx context.Context, requestID string, canon
 			"count":      len(toStringSlice(params["keys"])),
 		}, nil
 	case "update.run":
-		return map[string]any{
-			"ok":          true,
-			"status":      "queued",
-			"requestId":   requestID,
-			"target":      toString(params["targetVersion"], "latest"),
-			"scheduledAt": time.Now().UTC().Format(time.RFC3339),
-		}, nil
+		return s.handleCompatUpdateRun(requestID, params), nil
 	case "cron.list":
 		return s.handleCompatCronList(), nil
 	case "cron.status":
@@ -1954,12 +2057,82 @@ func (s *Server) handleCompatCronRuns(params map[string]any) map[string]any {
 	return map[string]any{"count": len(runs), "items": runs}
 }
 
+func (s *Server) handleCompatUpdateRun(requestID string, params map[string]any) map[string]any {
+	target := normalizeOptionalText(firstNonEmptyValue(params, "targetVersion", "target"), 128)
+	if target == "" {
+		target = "latest"
+	}
+	channel := normalizeOptionalText(firstNonEmptyValue(params, "channel", "requestedBy"), 64)
+	force := toBool(params["force"], false)
+	dryRun := toBool(params["dryRun"], false)
+	simulateFailure := toBool(params["simulateFailure"], false)
+
+	job := s.compat.createUpdateJob(target, dryRun, force, channel)
+	jobID := toString(job["jobId"], "")
+
+	if !dryRun && jobID != "" {
+		go func() {
+			time.Sleep(15 * time.Millisecond)
+			_, _ = s.compat.updateUpdateJob(jobID, "running", "download", 35, map[string]any{
+				"requestId": requestID,
+			})
+
+			time.Sleep(15 * time.Millisecond)
+			_, _ = s.compat.updateUpdateJob(jobID, "running", "apply", 75, nil)
+
+			if envTruthy("OPENCLAW_GO_UPDATE_FAIL") || simulateFailure {
+				_, _ = s.compat.failUpdateJob(jobID, "simulated update failure")
+				return
+			}
+			_, _ = s.compat.completeUpdateJob(jobID, true, []string{
+				"gateway contracts refreshed",
+				"runtime compatibility checks passed",
+			})
+		}()
+	}
+
+	return map[string]any{
+		"ok":        true,
+		"requestId": requestID,
+		"target":    target,
+		"job":       job,
+		"status":    toString(job["status"], "queued"),
+		"phase":     toString(job["phase"], "queued"),
+		"scheduledAt": toString(
+			job["startedAt"],
+			time.Now().UTC().Format(time.RFC3339),
+		),
+	}
+}
+
 func (s *Server) handleCompatPoll(params map[string]any) map[string]any {
+	jobID := normalizeOptionalText(firstNonEmptyValue(params, "jobId"), 128)
+	if jobID != "" {
+		if job, ok := s.compat.getUpdateJob(jobID); ok {
+			return map[string]any{
+				"count": 1,
+				"items": []map[string]any{
+					{
+						"kind": "update",
+						"job":  job,
+					},
+				},
+				"job":    job,
+				"jobId":  jobID,
+				"status": toString(job["status"], "unknown"),
+			}
+		}
+	}
+
 	limit := toInt(params["limit"], 25)
 	events := s.compat.listEvents(limit)
+	updateJobs := s.compat.listUpdateJobs(limit)
 	return map[string]any{
-		"count": len(events),
-		"items": events,
+		"count":         len(events),
+		"items":         events,
+		"updateCount":   len(updateJobs),
+		"updateJobs":    updateJobs,
+		"hasUpdateJobs": len(updateJobs) > 0,
 	}
 }
 

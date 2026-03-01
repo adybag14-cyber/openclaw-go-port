@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/buildinfo"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/config"
@@ -46,6 +47,28 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 	if payload["status"] != "ok" {
 		t.Fatalf("unexpected health status: %v", payload["status"])
+	}
+}
+
+func TestStatusRPCPhaseMarkerCutoverReady(t *testing.T) {
+	s := New(config.Default(), buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	frame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "status-phase",
+		"method": "status",
+		"params": map[string]any{},
+	})
+	result := assertRPCResult(t, frame)
+	phase := toString(result["phase"], "")
+	if phase != "phase-8-cutover-ready" {
+		t.Fatalf("expected status phase marker to be phase-8-cutover-ready, got %q", phase)
+	}
+	if strings.Contains(strings.ToLower(phase), "scaffold") {
+		t.Fatalf("status phase marker still contains scaffold semantics: %q", phase)
 	}
 }
 
@@ -2216,6 +2239,80 @@ func TestEdgeAccelerationStatusHonorsAccelerationEnv(t *testing.T) {
 	}
 	if !foundGPU {
 		t.Fatalf("expected gpu capability when OPENCLAW_GO_GPU_AVAILABLE=true")
+	}
+}
+
+func TestCompatUpdateRunAndPollLifecycle(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-update-lifecycle"
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	start := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "update-run",
+		"method": "update.run",
+		"params": map[string]any{
+			"targetVersion": "v2.0.5-go",
+		},
+	})
+	startResult := assertRPCResult(t, start)
+	job, _ := startResult["job"].(map[string]any)
+	jobID := toString(job["jobId"], "")
+	if jobID == "" {
+		t.Fatalf("expected update.run to return job.jobId")
+	}
+
+	final := map[string]any{}
+	finalStatus := ""
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		poll := rpcCall(t, ts.URL, map[string]any{
+			"type":   "req",
+			"id":     "poll-update",
+			"method": "poll",
+			"params": map[string]any{
+				"jobId": jobID,
+			},
+		})
+		pollResult := assertRPCResult(t, poll)
+		polledJob, _ := pollResult["job"].(map[string]any)
+		if len(polledJob) > 0 {
+			final = polledJob
+			finalStatus = toString(polledJob["status"], "")
+		} else {
+			finalStatus = toString(pollResult["status"], "")
+		}
+		if finalStatus == "completed" || finalStatus == "failed" {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	if finalStatus != "completed" {
+		t.Fatalf("expected update lifecycle to complete, got status=%q job=%v", finalStatus, final)
+	}
+	if progress := int(toFloat64(final["progress"])); progress != 100 {
+		t.Fatalf("expected final progress=100, got %v", final["progress"])
+	}
+	if transitions := int(toFloat64(final["transitionCount"])); transitions < 2 {
+		t.Fatalf("expected at least 2 lifecycle transitions, got %v", final["transitionCount"])
+	}
+
+	pollList := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "poll-list-update",
+		"method": "poll",
+		"params": map[string]any{
+			"limit": 10,
+		},
+	})
+	pollListResult := assertRPCResult(t, pollList)
+	if updateCount := int(toFloat64(pollListResult["updateCount"])); updateCount < 1 {
+		t.Fatalf("expected poll list to include update jobs, got updateCount=%v", pollListResult["updateCount"])
 	}
 }
 

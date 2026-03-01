@@ -694,3 +694,22 @@
   - `/usr/local/go/bin/gofmt -w ...`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation (Issue #8) - Slice 2: Operational Status + Update Lifecycle Depth
+
+- Removed residual scaffold marker from runtime status contracts:
+  - `status.phase` now reports `phase-8-cutover-ready`.
+- Expanded `update.run` from static queued envelope into lifecycle-tracked update jobs:
+  - queue/run/apply/finalize status progression with transition counters and progress.
+  - failure path support via simulation toggle and env gate.
+  - deterministic job metadata (`jobId`, `targetVersion`, `phase`, `progress`, timestamps, release notes).
+- Expanded `poll` behavior to support update lifecycle polling:
+  - `poll(jobId=...)` now resolves update job state directly.
+  - generic poll now includes update job summaries (`updateCount`, `updateJobs`, `hasUpdateJobs`) in addition to event items.
+- Added integration coverage:
+  - status phase marker validation.
+  - `update.run` + `poll` lifecycle progression and completion assertions.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`

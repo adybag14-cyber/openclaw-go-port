@@ -2083,7 +2083,7 @@ func (s *Server) statusPayload() map[string]any {
 		"status":           "ok",
 		"service":          s.build.Service,
 		"version":          s.build.Version,
-		"phase":            "phase-4-runtime-scaffold",
+		"phase":            "phase-8-cutover-ready",
 		"supportedMethods": methods,
 		"count":            len(methods),
 		"sessions": map[string]any{

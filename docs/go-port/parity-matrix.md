@@ -49,3 +49,4 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 - Slice 11 complete (Issue #7): security audit parity expansion for telemetry/attestation posture findings plus remediation normalization.
 - Slice 12 complete (Issue #7): enclave proof input strictness + enriched enclave status metadata + finetune execution status/failure/timeout contract depth.
 - Slice 13 complete (Issue #8): session lifecycle parity depth (`sessions.delete/reset/compact` now mutate session registry + state + memory with durable compaction/removal behavior).
+- Slice 14 complete (Issue #8): operational parity cleanup (status phase marker no longer scaffolded + `update.run`/`poll` lifecycle contracts with transition-aware job tracking).
