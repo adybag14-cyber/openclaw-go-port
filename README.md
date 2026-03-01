@@ -2,7 +2,7 @@
 
 OpenClaw is now fully ported to Go in this repository.
 
-Current release: `v2.10.0-go`
+Current release: `v2.10.1-go`
 
 ## Status
 
@@ -113,6 +113,21 @@ Compose files:
 - `docker-compose.yml`: Go runtime service.
 - `docker-compose.bridge.yml`: ChatGPT browser bridge service + endpoint wiring.
 
+Optional Lightpanda backend (CDP) for browser bridge:
+
+```powershell
+$env:OPENCLAW_CHATGPT_LIGHTPANDA_WS_ENDPOINT="ws://127.0.0.1:9222"
+$env:OPENCLAW_CHATGPT_BRIDGE_ENGINES="lightpanda-playwright,lightpanda-puppeteer,playwright,puppeteer"
+```
+
+The bridge scripts also support direct auth helper execution:
+
+```powershell
+node scripts/chatgpt-browser-auth.mjs --engine lightpanda --lightpanda-endpoint ws://127.0.0.1:9222
+```
+
+Lightpanda is wired as an optional backend with automatic fallback to Playwright/Puppeteer.
+
 ## Build Release Artifacts
 
 ### PowerShell
@@ -162,6 +177,8 @@ Main command families:
 - `/tts status|providers|provider|on|off|speak`
 
 Browser session bridge and provider alias handling (including Copaw/Qwen aliases) are implemented in Go runtime surfaces.
+Bridge engine selection now supports `lightpanda-playwright` and `lightpanda-puppeteer` through
+`OPENCLAW_CHATGPT_LIGHTPANDA_WS_ENDPOINT` + `OPENCLAW_CHATGPT_BRIDGE_ENGINES`.
 
 ## Multi-Channel Adapters
 

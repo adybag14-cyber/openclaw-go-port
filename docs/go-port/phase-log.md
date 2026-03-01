@@ -1078,3 +1078,22 @@
   - `/usr/local/go/bin/gofmt -w ./internal/gateway/compat.go ./internal/gateway/provider_catalog_test.go ./internal/gateway/server.go ./internal/gateway/server_test.go`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation - Lightpanda Browser Bridge Backend (Optional CDP Path)
+
+- Added Lightpanda-compatible browser bridge execution path in Node bridge helpers used by Go runtime operator flows:
+  - `scripts/chatgpt-browser-bridge.mjs`:
+    - added CDP endpoint support via `OPENCLAW_CHATGPT_LIGHTPANDA_WS_ENDPOINT`.
+    - added engine routing control via `OPENCLAW_CHATGPT_BRIDGE_ENGINES`.
+    - added Lightpanda Playwright/Puppeteer connection attempts with fallback to local Playwright/Puppeteer.
+    - extended `/health` payload with bridge engine order and Lightpanda readiness fields.
+  - `scripts/chatgpt-browser-auth.mjs`:
+    - added `--engine lightpanda` and `--lightpanda-endpoint` support.
+    - added Lightpanda Playwright/Puppeteer auth-capture attempts and structured error shaping.
+- Updated operator docs and compose wiring:
+  - `README.md`: Lightpanda environment examples and explicit fallback behavior notes.
+  - `docker-compose.bridge.yml`: plumbed Lightpanda endpoint + engine-order env passthrough.
+- Validation completed:
+  - `node --check scripts/chatgpt-browser-auth.mjs`
+  - `node --check scripts/chatgpt-browser-bridge.mjs`
+  - bridge `/health` smoke in both default and Lightpanda-configured modes.
