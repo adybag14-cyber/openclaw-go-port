@@ -51,3 +51,4 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 - Slice 13 complete (Issue #8): session lifecycle parity depth (`sessions.delete/reset/compact` now mutate session registry + state + memory with durable compaction/removal behavior).
 - Slice 14 complete (Issue #8): operational parity cleanup (status phase marker no longer scaffolded + `update.run`/`poll` lifecycle contracts with transition-aware job tracking).
 - Slice 15 complete (Issue #9): residual simulated/scaffold semantic cleanup (deterministic enclave mode resolution, local-heuristic voice fallback semantics, and scaffold wording removal in gateway/runtime metadata).
+- Slice 16 complete (Issue #10): compat dispatch tightening (generic fallback removed; unsupported compat methods now return strict `-32601`, with supported-method coverage guard against silent fallback drift).

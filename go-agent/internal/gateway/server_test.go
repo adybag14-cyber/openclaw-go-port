@@ -2421,7 +2421,7 @@ func TestAllSupportedMethodsDispatchWithoutNotImplemented(t *testing.T) {
 		if seeded, ok := paramsByMethod[resolved.Canonical]; ok {
 			params = cloneMap(seeded)
 		}
-		_, rpcErr := s.dispatchRPC(
+		result, rpcErr := s.dispatchRPC(
 			context.Background(),
 			fmt.Sprintf("coverage-%03d", idx+1),
 			resolved.Canonical,
@@ -2429,6 +2429,11 @@ func TestAllSupportedMethodsDispatchWithoutNotImplemented(t *testing.T) {
 		)
 		if rpcErr != nil && rpcErr.Code == -32601 {
 			t.Fatalf("method %q resolved %q still returns not implemented", method, resolved.Canonical)
+		}
+		if rpcErr == nil {
+			if status, _ := result["status"].(string); strings.EqualFold(status, "compat-fallback") {
+				t.Fatalf("method %q resolved %q still hits compat-fallback status", method, resolved.Canonical)
+			}
 		}
 	}
 }

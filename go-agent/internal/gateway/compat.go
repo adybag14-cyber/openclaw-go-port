@@ -1096,12 +1096,14 @@ func (s *Server) handleCompatMethod(ctx context.Context, requestID string, canon
 	case "sessions.usage.logs":
 		return s.handleCompatSessionsUsageLogs(params), nil
 	default:
-		return map[string]any{
-			"ok":        true,
-			"method":    canonical,
-			"requestId": requestID,
-			"status":    "compat-fallback",
-		}, nil
+		return nil, &dispatchError{
+			Code:    -32601,
+			Message: "compat method not implemented",
+			Details: map[string]any{
+				"method":    canonical,
+				"requestId": requestID,
+			},
+		}
 	}
 }
 

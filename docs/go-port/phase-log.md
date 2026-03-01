@@ -731,3 +731,15 @@
   - `/usr/local/go/bin/gofmt -w ...`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation (Issue #10) - Slice 1: Compat Dispatch Fallback Elimination
+
+- Removed generic compat success fallback path:
+  - `handleCompatMethod` default branch now returns strict `-32601` (`compat method not implemented`) instead of synthetic `compat-fallback` success envelopes.
+- Added supported-method coverage guard:
+  - expanded full-method dispatch test now fails if any supported method resolves to `status=compat-fallback`.
+  - preserves strict expectation that all advertised methods are explicitly wired.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`
