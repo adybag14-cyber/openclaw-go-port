@@ -253,6 +253,53 @@ func collectFindings(cfg config.Config) []Finding {
 			Remediation: "raise risk thresholds for tighter block/review posture",
 		})
 	}
+	edrPath := strings.TrimSpace(cfg.Security.EDRTelemetryPath)
+	if edrPath == "" {
+		findings = append(findings, Finding{
+			CheckID:     "security.edr_telemetry.unset",
+			Severity:    SeverityInfo,
+			Title:       "EDR telemetry feed path is not configured",
+			Detail:      "security.edr_telemetry_path is empty",
+			Remediation: "set security.edr_telemetry_path to a readable JSONL telemetry feed path",
+		})
+	} else {
+		edrStat, err := os.Stat(edrPath)
+		if err != nil {
+			findings = append(findings, Finding{
+				CheckID:     "security.edr_telemetry.stat_failed",
+				Severity:    SeverityWarn,
+				Title:       "EDR telemetry feed cannot be inspected",
+				Detail:      err.Error(),
+				Remediation: "ensure security.edr_telemetry_path exists and is readable",
+			})
+		} else if edrStat.IsDir() {
+			findings = append(findings, Finding{
+				CheckID:     "security.edr_telemetry.is_dir",
+				Severity:    SeverityWarn,
+				Title:       "EDR telemetry feed path is a directory",
+				Detail:      "security.edr_telemetry_path must point to a JSONL file",
+				Remediation: "set security.edr_telemetry_path to a JSONL telemetry file path",
+			})
+		}
+	}
+	if strings.TrimSpace(cfg.Security.AttestationExpectedSHA) == "" {
+		findings = append(findings, Finding{
+			CheckID:     "security.attestation.expected_sha_unset",
+			Severity:    SeverityInfo,
+			Title:       "Runtime attestation expected digest is not configured",
+			Detail:      "security.attestation_expected_sha256 is empty",
+			Remediation: "set security.attestation_expected_sha256 to enforce runtime binary verification",
+		})
+	}
+	if strings.TrimSpace(cfg.Security.AttestationReportPath) == "" {
+		findings = append(findings, Finding{
+			CheckID:     "security.attestation.report_path_unset",
+			Severity:    SeverityInfo,
+			Title:       "Runtime attestation report path is not configured",
+			Detail:      "security.attestation_report_path is empty",
+			Remediation: "set security.attestation_report_path to persist attestation snapshots",
+		})
+	}
 	if len(cfg.Security.BlockedMessagePatterns) == 0 {
 		findings = append(findings, Finding{
 			CheckID:  "security.blocked_patterns.empty",
@@ -406,6 +453,26 @@ func applyFixes(cfg config.Config, configPath string) (config.Config, *FixResult
 			next.Security.RiskBlockThreshold = next.Security.RiskReviewThreshold
 		}
 		recordChange("set security.risk_block_threshold to default")
+	}
+	if strings.TrimSpace(next.Security.EDRTelemetryPath) == "" {
+		next.Security.EDRTelemetryPath = filepath.Join(baseDir, "edr-telemetry.jsonl")
+		recordChange("set security.edr_telemetry_path to persisted telemetry feed path")
+	}
+	if next.Security.EDRTelemetryMaxAgeSecs <= 0 {
+		next.Security.EDRTelemetryMaxAgeSecs = defaults.Security.EDRTelemetryMaxAgeSecs
+		recordChange("set security.edr_telemetry_max_age_secs to default")
+	}
+	if next.Security.EDRTelemetryRiskBonus <= 0 || next.Security.EDRTelemetryRiskBonus > 100 {
+		next.Security.EDRTelemetryRiskBonus = defaults.Security.EDRTelemetryRiskBonus
+		recordChange("set security.edr_telemetry_risk_bonus to default")
+	}
+	if strings.TrimSpace(next.Security.AttestationReportPath) == "" {
+		next.Security.AttestationReportPath = filepath.Join(baseDir, "attestation-report.json")
+		recordChange("set security.attestation_report_path to persisted file path")
+	}
+	if next.Security.AttestationMismatchRisk <= 0 || next.Security.AttestationMismatchRisk > 100 {
+		next.Security.AttestationMismatchRisk = defaults.Security.AttestationMismatchRisk
+		recordChange("set security.attestation_mismatch_risk_bonus to default")
 	}
 
 	policyPath := strings.TrimSpace(next.Security.PolicyBundlePath)

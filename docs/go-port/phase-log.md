@@ -634,3 +634,25 @@
   - `/usr/local/go/bin/gofmt -w ...`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation (Issue #7) - Slice 2: Security Audit Telemetry/Attestation Parity Expansion
+
+- Expanded security audit findings to cover telemetry + attestation posture:
+  - `security.edr_telemetry.unset`
+  - `security.edr_telemetry.stat_failed`
+  - `security.edr_telemetry.is_dir`
+  - `security.attestation.expected_sha_unset`
+  - `security.attestation.report_path_unset`
+- Expanded `--security-audit --fix` remediation to set/normalize:
+  - `security.edr_telemetry_path`
+  - `security.edr_telemetry_max_age_secs`
+  - `security.edr_telemetry_risk_bonus`
+  - `security.attestation_report_path`
+  - `security.attestation_mismatch_risk_bonus`
+- Added test coverage:
+  - `TestRunReportsTelemetryAndAttestationPostureFindings`
+  - remediation assertions for telemetry/attestation path population.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`

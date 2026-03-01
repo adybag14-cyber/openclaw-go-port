@@ -79,6 +79,21 @@ func TestRunDetectsInvalidPolicyBundleFile(t *testing.T) {
 	}
 }
 
+func TestRunReportsTelemetryAndAttestationPostureFindings(t *testing.T) {
+	cfg := config.Default()
+	report := Run(cfg, Options{})
+
+	if !hasFinding(report, "security.edr_telemetry.unset") {
+		t.Fatalf("expected security.edr_telemetry.unset finding")
+	}
+	if !hasFinding(report, "security.attestation.expected_sha_unset") {
+		t.Fatalf("expected security.attestation.expected_sha_unset finding")
+	}
+	if !hasFinding(report, "security.attestation.report_path_unset") {
+		t.Fatalf("expected security.attestation.report_path_unset finding")
+	}
+}
+
 func TestRunDeepBrowserBridgeProbe(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -190,6 +205,12 @@ func TestRunFixAppliesRemediationsAndPersistsConfig(t *testing.T) {
 	}
 	if strings.TrimSpace(loaded.Security.PolicyBundlePath) == "" {
 		t.Fatalf("expected policy bundle path to be set")
+	}
+	if strings.TrimSpace(loaded.Security.EDRTelemetryPath) == "" {
+		t.Fatalf("expected edr telemetry path to be set")
+	}
+	if strings.TrimSpace(loaded.Security.AttestationReportPath) == "" {
+		t.Fatalf("expected attestation report path to be set")
 	}
 	if _, err := os.Stat(loaded.Security.PolicyBundlePath); err != nil {
 		t.Fatalf("expected policy bundle file to exist: %v", err)

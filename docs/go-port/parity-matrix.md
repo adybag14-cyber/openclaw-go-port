@@ -46,3 +46,4 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 - Slice 8 complete (Issue #6): security engine depth parity (EDR telemetry feed parsing/caching + runtime attestation mismatch scoring/reporting + config/env validation surfaces).
 - Slice 9 complete (Issue #6): edge runtime behavior depth (`tinywhisper` local STT execution path, attestation-binary enclave proof path, and non-dry-run finetune trainer execution/manifest contracts).
 - Slice 10 complete (Issue #7): homomorphic ciphertext contract hardening (`keyId` requirement, strict op set, `mean` reveal requirement, and empty-ciphertext rejection with integration coverage).
+- Slice 11 complete (Issue #7): security audit parity expansion for telemetry/attestation posture findings plus remediation normalization.
