@@ -763,35 +763,47 @@ func (s *Server) handleTelegramTTSCommand(target string, rawCommand string, args
 	case "status":
 		status := s.handleCompatTTSStatus()
 		enabled := toBool(status["enabled"], false)
-		provider := toString(status["provider"], "native")
-		return telegramCommandReceipt(target, fmt.Sprintf("TTS is `%t` via `%s`.", enabled, provider), map[string]any{
-			"type":     "tts.status",
-			"target":   target,
-			"enabled":  enabled,
-			"provider": provider,
+		provider := toString(status["provider"], defaultCompatTTSProvider)
+		return telegramCommandReceipt(target, fmt.Sprintf("TTS is `%t` via `%s` (available=%t).", enabled, provider, toBool(status["available"], false)), map[string]any{
+			"type":      "tts.status",
+			"target":    target,
+			"enabled":   enabled,
+			"provider":  provider,
+			"available": toBool(status["available"], false),
+			"reason":    toString(status["reason"], ""),
 		}), nil
 	case "on", "enable":
 		state := s.handleCompatTTSEnable(true)
-		return telegramCommandReceipt(target, fmt.Sprintf("TTS enabled via `%s`.", toString(state["provider"], "native")), map[string]any{
-			"type":     "tts.enable",
-			"target":   target,
-			"enabled":  true,
-			"provider": toString(state["provider"], "native"),
+		return telegramCommandReceipt(target, fmt.Sprintf("TTS enabled via `%s`.", toString(state["provider"], defaultCompatTTSProvider)), map[string]any{
+			"type":      "tts.enable",
+			"target":    target,
+			"enabled":   true,
+			"provider":  toString(state["provider"], defaultCompatTTSProvider),
+			"available": toBool(state["available"], false),
+			"reason":    toString(state["reason"], ""),
 		}), nil
 	case "off", "disable":
 		state := s.handleCompatTTSEnable(false)
-		return telegramCommandReceipt(target, fmt.Sprintf("TTS disabled (provider `%s`).", toString(state["provider"], "native")), map[string]any{
-			"type":     "tts.disable",
-			"target":   target,
-			"enabled":  false,
-			"provider": toString(state["provider"], "native"),
+		return telegramCommandReceipt(target, fmt.Sprintf("TTS disabled (provider `%s`).", toString(state["provider"], defaultCompatTTSProvider)), map[string]any{
+			"type":      "tts.disable",
+			"target":    target,
+			"enabled":   false,
+			"provider":  toString(state["provider"], defaultCompatTTSProvider),
+			"available": toBool(state["available"], false),
+			"reason":    toString(state["reason"], ""),
 		}), nil
 	case "providers":
-		providers := []map[string]any{
-			{"id": "native", "name": "Native Bridge", "enabled": true},
-			{"id": "elevenlabs", "name": "ElevenLabs", "enabled": false},
-			{"id": "openai-voice", "name": "OpenAI Voice", "enabled": true},
-			{"id": "edge", "name": "Edge TTS", "enabled": true},
+		ttsProviders := s.handleCompatTTSProviders()
+		providers := make([]map[string]any, 0, 4)
+		switch rawProviders := ttsProviders["providers"].(type) {
+		case []map[string]any:
+			providers = rawProviders
+		case []any:
+			for _, item := range rawProviders {
+				if asMap, ok := item.(map[string]any); ok {
+					providers = append(providers, asMap)
+				}
+			}
 		}
 		lines := make([]string, 0, len(providers))
 		for _, provider := range providers {
@@ -820,11 +832,13 @@ func (s *Server) handleTelegramTTSCommand(target string, rawCommand string, args
 				"error":  derr.Message,
 			}), nil
 		}
-		return telegramCommandReceipt(target, fmt.Sprintf("TTS provider set to `%s`.", toString(state["provider"], "native")), map[string]any{
-			"type":     "tts.provider",
-			"target":   target,
-			"provider": toString(state["provider"], "native"),
-			"enabled":  toBool(state["enabled"], true),
+		return telegramCommandReceipt(target, fmt.Sprintf("TTS provider set to `%s` (available=%t).", toString(state["provider"], defaultCompatTTSProvider), toBool(state["available"], false)), map[string]any{
+			"type":      "tts.provider",
+			"target":    target,
+			"provider":  toString(state["provider"], defaultCompatTTSProvider),
+			"enabled":   toBool(state["enabled"], true),
+			"available": toBool(state["available"], false),
+			"reason":    toString(state["reason"], ""),
 		}), nil
 	case "say":
 		text := extractTTSSayText(rawCommand)
@@ -835,16 +849,27 @@ func (s *Server) handleTelegramTTSCommand(target string, rawCommand string, args
 				"error":  "missing_text",
 			}), nil
 		}
-		converted := s.handleCompatTTSConvert(map[string]any{
+		converted, derr := s.handleCompatTTSConvert(map[string]any{
 			"text": text,
 		})
-		return telegramCommandReceipt(target, fmt.Sprintf("TTS synthesized `%d` bytes.", toInt(converted["bytes"], 0)), map[string]any{
-			"type":     "tts.say",
-			"target":   target,
-			"text":     text,
-			"audioRef": toString(converted["audioRef"], ""),
-			"bytes":    toInt(converted["bytes"], 0),
-			"provider": toString(converted["provider"], "native"),
+		if derr != nil {
+			return telegramCommandReceipt(target, fmt.Sprintf("TTS synthesis failed: %s", derr.Message), map[string]any{
+				"type":   "tts.say",
+				"target": target,
+				"error":  derr.Message,
+			}), nil
+		}
+		return telegramCommandReceipt(target, fmt.Sprintf("TTS synthesized `%d` bytes (real=%t).", toInt(converted["bytes"], 0), toBool(converted["realAudio"], false)), map[string]any{
+			"type":         "tts.say",
+			"target":       target,
+			"text":         text,
+			"audioRef":     toString(converted["audioRef"], ""),
+			"bytes":        toInt(converted["bytes"], 0),
+			"provider":     toString(converted["provider"], defaultCompatTTSProvider),
+			"outputFormat": toString(converted["outputFormat"], defaultCompatTTSFormat),
+			"realAudio":    toBool(converted["realAudio"], false),
+			"fallback":     toBool(converted["fallback"], false),
+			"engine":       toString(converted["engine"], "unknown"),
 		}), nil
 	case "help":
 		return telegramCommandReceipt(target, strings.Join([]string{

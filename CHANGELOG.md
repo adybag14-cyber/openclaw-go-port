@@ -5,6 +5,29 @@
 ### Highlights
 - No unreleased changes.
 
+## v2.8.0-go - 2026-03-01
+
+### Highlights
+- Expanded compat TTS provider depth:
+  - unified `tts.providers` catalog with availability/reason metadata.
+  - added `kittentts` provider detection (`OPENCLAW_GO_KITTENTTS_BIN` / PATH) and runtime synthesis adapter support.
+  - added `tts.convert` support for `requireRealAudio` guard semantics and richer output metadata (`outputFormat`, `realAudio`, `fallback`, `audioBase64`).
+- Aligned Telegram `/tts` command flow with compat TTS contracts:
+  - `/tts providers` now uses the same provider catalog as RPC.
+  - `/tts say` now returns real/fallback synthesis metadata fields.
+- Added gateway regression coverage for:
+  - TTS provider catalog presence (including `kittentts`),
+  - conversion fallback behavior,
+  - strict real-audio failure mode.
+
+### Validation
+- Dockerized Go validation:
+  - `gofmt -w ./internal/gateway/compat.go ./internal/gateway/telegram_commands.go ./internal/gateway/server_test.go ./internal/gateway/compat_tts_test.go`
+  - `go test ./...`
+  - `go vet ./...`
+- Release build matrix:
+  - `go-agent/scripts/build-matrix.sh 2.8.0 ../dist/release-v2.8.0-go-assets`
+
 ## v2.7.0-go - 2026-03-01
 
 ### Highlights

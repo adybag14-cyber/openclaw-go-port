@@ -23,13 +23,13 @@ docker run --rm -v "$PWD/go-agent:/work" -w /work golang:1.25 sh -lc "export PAT
 Windows PowerShell:
 
 ```powershell
-pwsh ./scripts/build-matrix.ps1 -Version 2.7.0
+pwsh ./scripts/build-matrix.ps1 -Version 2.8.0
 ```
 
 POSIX shell:
 
 ```bash
-sh ./scripts/build-matrix.sh 2.7.0
+sh ./scripts/build-matrix.sh 2.8.0
 ```
 
 Artifacts include:

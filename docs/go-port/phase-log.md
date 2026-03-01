@@ -994,3 +994,24 @@
   - `dist/release-v2.7.0-go-assets/openclaw-go-linux-amd64`
   - `dist/release-v2.7.0-go-assets/openclaw-go-android-arm64`
   - `dist/release-v2.7.0-go-assets/SHA256SUMS.txt`
+
+### Post-v2 Continuation - v2.8.0-go TTS Runtime Depth + Telegram Contract Alignment
+
+- Opened tracking issue for this slice:
+  - `https://github.com/adybag14-cyber/openclaw-go-port/issues/20`
+- Expanded compat TTS runtime behavior:
+  - unified `tts.providers` catalog with runtime availability/reason metadata.
+  - added `kittentts` binary discovery (`OPENCLAW_GO_KITTENTTS_BIN`, `OPENCLAW_GO_TTS_KITTENTTS_BIN`, `PATH`).
+  - added `kittentts` execution adapter support with env-driven args (`OPENCLAW_GO_KITTENTTS_ARGS`) and timeout control (`OPENCLAW_GO_KITTENTTS_TIMEOUT_MS`).
+  - upgraded `tts.convert` contract with strict real-audio mode (`requireRealAudio`), structured audio metadata, and deterministic synthetic WAV fallback behavior.
+- Aligned Telegram `/tts` command surfaces with compat contracts:
+  - `/tts providers` now uses compat provider catalog directly.
+  - `/tts status|on|off|provider` includes availability/reason metadata.
+  - `/tts say` now surfaces `realAudio`, `outputFormat`, `fallback`, and engine metadata.
+- Added/expanded tests:
+  - `go-agent/internal/gateway/compat_tts_test.go`
+  - `go-agent/internal/gateway/server_test.go` TTS assertions for provider presence (`kittentts`) and metadata depth.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ./internal/gateway/compat.go ./internal/gateway/telegram_commands.go ./internal/gateway/server_test.go ./internal/gateway/compat_tts_test.go`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`

@@ -920,8 +920,23 @@ func TestTelegramCommandFlowModelAuthTTS(t *testing.T) {
 	if ttsProvidersMeta["type"] != "tts.providers" {
 		t.Fatalf("expected tts.providers metadata, got %v", ttsProvidersMeta["type"])
 	}
-	if providers, ok := ttsProvidersMeta["providers"].([]any); !ok || len(providers) == 0 {
+	providers, ok := ttsProvidersMeta["providers"].([]any)
+	if !ok || len(providers) == 0 {
 		t.Fatalf("expected non-empty tts provider list")
+	}
+	foundKitten := false
+	for _, provider := range providers {
+		asMap, ok := provider.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(toString(asMap["id"], ""), "kittentts") {
+			foundKitten = true
+			break
+		}
+	}
+	if !foundKitten {
+		t.Fatalf("expected kittentts provider in provider list")
 	}
 
 	ttsHelpResult := runCommand("tg-cmd-tts-help", "/tts help")
@@ -942,6 +957,9 @@ func TestTelegramCommandFlowModelAuthTTS(t *testing.T) {
 	}
 	if bytes, _ := ttsSayMeta["bytes"].(float64); int(bytes) <= 0 {
 		t.Fatalf("expected positive tts bytes, got %v", ttsSayMeta["bytes"])
+	}
+	if toString(ttsSayMeta["outputFormat"], "") == "" {
+		t.Fatalf("expected outputFormat in tts.say metadata")
 	}
 }
 

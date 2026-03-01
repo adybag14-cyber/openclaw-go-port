@@ -1,8 +1,15 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"fmt"
+	"math"
+	"os"
+	osexec "os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -973,17 +980,11 @@ func (s *Server) handleCompatMethod(ctx context.Context, requestID string, canon
 	case "tts.disable":
 		return s.handleCompatTTSEnable(false), nil
 	case "tts.providers":
-		return map[string]any{
-			"providers": []map[string]any{
-				{"id": "native", "name": "Native Bridge", "enabled": true},
-				{"id": "elevenlabs", "name": "ElevenLabs", "enabled": false},
-				{"id": "openai-voice", "name": "OpenAI Voice", "enabled": true},
-			},
-		}, nil
+		return s.handleCompatTTSProviders(), nil
 	case "tts.setprovider":
 		return s.handleCompatSetTTSProvider(params)
 	case "tts.convert":
-		return s.handleCompatTTSConvert(params), nil
+		return s.handleCompatTTSConvert(params)
 	case "voicewake.get":
 		return s.handleCompatVoiceWake(nil), nil
 	case "voicewake.set":
@@ -1258,55 +1259,492 @@ func (s *Server) handleCompatTalkMode(params map[string]any) map[string]any {
 	}
 }
 
+const (
+	defaultCompatTTSProvider  = "native"
+	defaultCompatTTSFormat    = "wav"
+	defaultKittenTTSTimeoutMs = 25000
+)
+
+func normalizeTTSProviderID(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.NewReplacer("_", "-", " ", "-", ".", "-").Replace(normalized)
+	switch normalized {
+	case "", "default", "local":
+		return defaultCompatTTSProvider
+	case "native", "edge", "edge-tts":
+		return "native"
+	case "openai", "voice", "openai-voice", "openai-tts", "openai-voice-bridge":
+		return "openai-voice"
+	case "elevenlabs", "eleven-labs", "11labs":
+		return "elevenlabs"
+	case "kittentts", "kitten-tts", "kitten-tts-cli", "kittytts":
+		return "kittentts"
+	default:
+		return normalized
+	}
+}
+
+func supportedCompatTTSProviders() []string {
+	return []string{"native", "openai-voice", "kittentts", "elevenlabs"}
+}
+
+func (s *Server) isSupportedCompatTTSProvider(provider string) bool {
+	normalized := normalizeTTSProviderID(provider)
+	for _, item := range supportedCompatTTSProviders() {
+		if item == normalized {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveKittenTTSBinary() (string, string) {
+	for _, envKey := range []string{"OPENCLAW_GO_KITTENTTS_BIN", "OPENCLAW_GO_TTS_KITTENTTS_BIN"} {
+		candidate := strings.TrimSpace(os.Getenv(envKey))
+		if candidate == "" {
+			continue
+		}
+		if path, err := osexec.LookPath(candidate); err == nil {
+			return path, envKey
+		}
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, envKey
+		}
+	}
+	if path, err := osexec.LookPath("kittentts"); err == nil {
+		return path, "PATH"
+	}
+	return "", ""
+}
+
+func (s *Server) compatTTSProviderCatalog() []map[string]any {
+	kittenttsPath, kittenttsSource := resolveKittenTTSBinary()
+	elevenlabsConfigured := strings.TrimSpace(os.Getenv("ELEVENLABS_API_KEY")) != "" || s.compat.hasProviderAPIKey("elevenlabs")
+	openAIVoiceEnabled := s.cfg.Runtime.BrowserBridge.Enabled && strings.TrimSpace(s.cfg.Runtime.BrowserBridge.Endpoint) != ""
+
+	kittenttsReason := "kittentts binary not found"
+	if kittenttsPath != "" {
+		kittenttsReason = fmt.Sprintf("kittentts binary found via %s", kittenttsSource)
+	}
+
+	return []map[string]any{
+		{
+			"id":        "native",
+			"name":      "Native Synth",
+			"enabled":   true,
+			"available": true,
+			"reason":    "built-in synthetic fallback",
+		},
+		{
+			"id":        "openai-voice",
+			"name":      "OpenAI Voice",
+			"enabled":   openAIVoiceEnabled,
+			"available": openAIVoiceEnabled,
+			"reason": map[bool]string{
+				true:  "browser bridge configured",
+				false: "browser bridge disabled or endpoint missing",
+			}[openAIVoiceEnabled],
+		},
+		{
+			"id":        "kittentts",
+			"name":      "KittenTTS",
+			"enabled":   kittenttsPath != "",
+			"available": kittenttsPath != "",
+			"reason":    kittenttsReason,
+		},
+		{
+			"id":           "elevenlabs",
+			"name":         "ElevenLabs",
+			"enabled":      elevenlabsConfigured,
+			"available":    elevenlabsConfigured,
+			"requiresAuth": true,
+			"reason": map[bool]string{
+				true:  "api key available",
+				false: "api key missing",
+			}[elevenlabsConfigured],
+		},
+	}
+}
+
+func (s *Server) compatTTSProviderInfo(provider string) map[string]any {
+	normalized := normalizeTTSProviderID(provider)
+	for _, item := range s.compatTTSProviderCatalog() {
+		if normalizeTTSProviderID(toString(item["id"], "")) == normalized {
+			return cloneMap(item)
+		}
+	}
+	return map[string]any{
+		"id":        normalized,
+		"name":      normalized,
+		"enabled":   false,
+		"available": false,
+		"reason":    "provider not supported",
+	}
+}
+
+func (s *Server) handleCompatTTSProviders() map[string]any {
+	status := s.handleCompatTTSStatus()
+	return map[string]any{
+		"providers": s.compatTTSProviderCatalog(),
+		"current": map[string]any{
+			"provider":  toString(status["provider"], defaultCompatTTSProvider),
+			"enabled":   toBool(status["enabled"], true),
+			"available": toBool(status["available"], true),
+		},
+	}
+}
+
 func (s *Server) handleCompatTTSStatus() map[string]any {
 	s.compat.mu.RLock()
 	enabled := s.compat.ttsEnabled
-	provider := s.compat.ttsProvider
+	provider := normalizeTTSProviderID(s.compat.ttsProvider)
+	if provider == "" {
+		provider = defaultCompatTTSProvider
+	}
 	s.compat.mu.RUnlock()
+	info := s.compatTTSProviderInfo(provider)
 	return map[string]any{
-		"enabled":  enabled,
-		"provider": provider,
+		"enabled":    enabled,
+		"provider":   provider,
+		"available":  toBool(info["available"], false),
+		"providerId": toString(info["id"], provider),
+		"name":       toString(info["name"], provider),
+		"reason":     toString(info["reason"], ""),
 	}
 }
 
 func (s *Server) handleCompatTTSEnable(enabled bool) map[string]any {
 	s.compat.mu.Lock()
 	s.compat.ttsEnabled = enabled
-	provider := s.compat.ttsProvider
+	provider := normalizeTTSProviderID(s.compat.ttsProvider)
+	if provider == "" {
+		provider = defaultCompatTTSProvider
+		s.compat.ttsProvider = provider
+	}
 	s.compat.mu.Unlock()
+	info := s.compatTTSProviderInfo(provider)
 	return map[string]any{
-		"enabled":  enabled,
-		"provider": provider,
+		"enabled":   enabled,
+		"provider":  provider,
+		"available": toBool(info["available"], false),
+		"reason":    toString(info["reason"], ""),
 	}
 }
 
 func (s *Server) handleCompatSetTTSProvider(params map[string]any) (map[string]any, *dispatchError) {
-	provider := strings.ToLower(toString(params["provider"], ""))
+	provider := normalizeTTSProviderID(toString(params["provider"], ""))
 	if provider == "" {
 		return nil, &dispatchError{
 			Code:    -32602,
 			Message: "missing provider",
 		}
 	}
+	if !s.isSupportedCompatTTSProvider(provider) {
+		return nil, &dispatchError{
+			Code:    -32602,
+			Message: "unsupported provider",
+			Details: map[string]any{
+				"provider":  provider,
+				"supported": supportedCompatTTSProviders(),
+			},
+		}
+	}
+
 	s.compat.mu.Lock()
 	s.compat.ttsProvider = provider
 	enabled := s.compat.ttsEnabled
 	s.compat.mu.Unlock()
+
+	info := s.compatTTSProviderInfo(provider)
 	return map[string]any{
-		"provider": provider,
-		"enabled":  enabled,
+		"provider":  provider,
+		"enabled":   enabled,
+		"available": toBool(info["available"], false),
+		"reason":    toString(info["reason"], ""),
 	}, nil
 }
 
-func (s *Server) handleCompatTTSConvert(params map[string]any) map[string]any {
-	text := toString(params["text"], toString(params["message"], ""))
-	return map[string]any{
-		"ok":       true,
-		"text":     text,
-		"provider": s.handleCompatTTSStatus()["provider"],
-		"audioRef": fmt.Sprintf("memory://tts/%d", time.Now().UTC().UnixNano()),
-		"bytes":    len(text) * 4,
+func normalizeTTSOutputFormat(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.TrimPrefix(normalized, ".")
+	if normalized == "" {
+		return defaultCompatTTSFormat
 	}
+	switch normalized {
+	case "wav", "mp3", "ogg", "flac", "opus":
+		return normalized
+	default:
+		return defaultCompatTTSFormat
+	}
+}
+
+func parseEnvInt(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	return toInt(raw, fallback)
+}
+
+func buildSyntheticTTSWave(text string) []byte {
+	runes := []rune(strings.TrimSpace(text))
+	if len(runes) == 0 {
+		runes = []rune("openclaw")
+	}
+
+	const (
+		sampleRate     = 16000
+		samplesPerRune = 320
+		amplitude      = 0.35
+	)
+
+	totalSamples := len(runes) * samplesPerRune
+	if totalSamples < sampleRate/2 {
+		totalSamples = sampleRate / 2
+	}
+	pcm := make([]int16, totalSamples)
+	for i := 0; i < totalSamples; i++ {
+		r := runes[(i/samplesPerRune)%len(runes)]
+		frequency := 180.0 + float64(int(r)%48)*9.0
+		phase := float64(i%samplesPerRune) / float64(samplesPerRune)
+		envelope := 1.0
+		if phase < 0.08 {
+			envelope = phase / 0.08
+		} else if phase > 0.92 {
+			envelope = (1.0 - phase) / 0.08
+		}
+		if envelope < 0 {
+			envelope = 0
+		}
+		angle := 2.0 * math.Pi * frequency * float64(i) / sampleRate
+		pcm[i] = int16(math.Sin(angle) * envelope * amplitude * 32767.0)
+	}
+
+	dataLen := len(pcm) * 2
+	buf := bytes.NewBuffer(make([]byte, 0, 44+dataLen))
+	_ = binary.Write(buf, binary.LittleEndian, []byte("RIFF"))
+	_ = binary.Write(buf, binary.LittleEndian, uint32(36+dataLen))
+	_ = binary.Write(buf, binary.LittleEndian, []byte("WAVE"))
+	_ = binary.Write(buf, binary.LittleEndian, []byte("fmt "))
+	_ = binary.Write(buf, binary.LittleEndian, uint32(16))
+	_ = binary.Write(buf, binary.LittleEndian, uint16(1)) // PCM
+	_ = binary.Write(buf, binary.LittleEndian, uint16(1)) // mono
+	_ = binary.Write(buf, binary.LittleEndian, uint32(sampleRate))
+	_ = binary.Write(buf, binary.LittleEndian, uint32(sampleRate*2))
+	_ = binary.Write(buf, binary.LittleEndian, uint16(2))
+	_ = binary.Write(buf, binary.LittleEndian, uint16(16))
+	_ = binary.Write(buf, binary.LittleEndian, []byte("data"))
+	_ = binary.Write(buf, binary.LittleEndian, uint32(dataLen))
+	for _, sample := range pcm {
+		_ = binary.Write(buf, binary.LittleEndian, sample)
+	}
+	return buf.Bytes()
+}
+
+func truncateForMetadata(value string, limit int) string {
+	trimmed := strings.TrimSpace(value)
+	if limit <= 0 || len(trimmed) <= limit {
+		return trimmed
+	}
+	return trimmed[:limit] + "..."
+}
+
+func (s *Server) runKittenTTSSynthesis(text string, outputFormat string) ([]byte, string, map[string]any, error) {
+	binPath, source := resolveKittenTTSBinary()
+	if binPath == "" {
+		return nil, outputFormat, map[string]any{
+			"engine": "kittentts",
+		}, fmt.Errorf("kittentts binary not found; set OPENCLAW_GO_KITTENTTS_BIN or install kittentts in PATH")
+	}
+
+	argsRaw := strings.TrimSpace(os.Getenv("OPENCLAW_GO_KITTENTTS_ARGS"))
+	args := []string{}
+	if argsRaw != "" {
+		args = strings.Fields(argsRaw)
+	}
+
+	tmpDir, err := os.MkdirTemp("", "openclaw-go-kittentts-*")
+	if err != nil {
+		return nil, outputFormat, map[string]any{"engine": "kittentts"}, fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	outputPath := filepath.Join(tmpDir, "tts."+normalizeTTSOutputFormat(outputFormat))
+	usesTextPlaceholder := false
+	usesOutputPlaceholder := false
+	for idx := range args {
+		if strings.Contains(args[idx], "{{text}}") {
+			args[idx] = strings.ReplaceAll(args[idx], "{{text}}", text)
+			usesTextPlaceholder = true
+		}
+		if strings.Contains(args[idx], "{{output}}") {
+			args[idx] = strings.ReplaceAll(args[idx], "{{output}}", outputPath)
+			usesOutputPlaceholder = true
+		}
+	}
+
+	timeoutMs := parseEnvInt("OPENCLAW_GO_KITTENTTS_TIMEOUT_MS", defaultKittenTTSTimeoutMs)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
+	defer cancel()
+
+	cmd := osexec.CommandContext(ctx, binPath, args...)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if !usesTextPlaceholder {
+		cmd.Stdin = strings.NewReader(text)
+	}
+
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, outputFormat, map[string]any{
+				"engine":        "kittentts",
+				"timeoutMs":     timeoutMs,
+				"binary":        binPath,
+				"binarySource":  source,
+				"stderrPreview": truncateForMetadata(stderr.String(), 320),
+			}, fmt.Errorf("kittentts execution timed out after %dms", timeoutMs)
+		}
+		return nil, outputFormat, map[string]any{
+			"engine":        "kittentts",
+			"binary":        binPath,
+			"binarySource":  source,
+			"stderrPreview": truncateForMetadata(stderr.String(), 320),
+		}, fmt.Errorf("kittentts execution failed: %w", err)
+	}
+
+	audioBytes := []byte{}
+	format := normalizeTTSOutputFormat(outputFormat)
+	if usesOutputPlaceholder {
+		if fileBytes, readErr := os.ReadFile(outputPath); readErr == nil {
+			audioBytes = fileBytes
+			ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(outputPath)), ".")
+			if ext != "" {
+				format = normalizeTTSOutputFormat(ext)
+			}
+		}
+	}
+	if len(audioBytes) == 0 {
+		audioBytes = append(audioBytes, stdout.Bytes()...)
+	}
+	if len(audioBytes) == 0 {
+		return nil, format, map[string]any{
+			"engine":        "kittentts",
+			"binary":        binPath,
+			"binarySource":  source,
+			"stderrPreview": truncateForMetadata(stderr.String(), 320),
+		}, fmt.Errorf("kittentts produced no audio output")
+	}
+
+	return audioBytes, format, map[string]any{
+		"engine":              "kittentts",
+		"binary":              binPath,
+		"binarySource":        source,
+		"argsConfigured":      argsRaw != "",
+		"textPlaceholderUsed": usesTextPlaceholder,
+		"outputFileUsed":      usesOutputPlaceholder,
+		"stderrPreview":       truncateForMetadata(stderr.String(), 320),
+	}, nil
+}
+
+func (s *Server) handleCompatTTSConvert(params map[string]any) (map[string]any, *dispatchError) {
+	text := toString(params["text"], toString(params["message"], ""))
+	if strings.TrimSpace(text) == "" {
+		return nil, &dispatchError{
+			Code:    -32602,
+			Message: "missing text",
+		}
+	}
+
+	status := s.handleCompatTTSStatus()
+	if !toBool(status["enabled"], true) {
+		return nil, &dispatchError{
+			Code:    -32050,
+			Message: "tts is disabled",
+		}
+	}
+
+	requestedProvider := normalizeTTSProviderID(toString(params["provider"], toString(status["provider"], defaultCompatTTSProvider)))
+	if !s.isSupportedCompatTTSProvider(requestedProvider) {
+		return nil, &dispatchError{
+			Code:    -32602,
+			Message: "unsupported provider",
+			Details: map[string]any{
+				"provider":  requestedProvider,
+				"supported": supportedCompatTTSProviders(),
+			},
+		}
+	}
+
+	requireRealAudio := toBool(params["requireRealAudio"], toBool(params["require_real_audio"], false))
+	requestedFormat := normalizeTTSOutputFormat(toString(params["format"], toString(params["outputFormat"], defaultCompatTTSFormat)))
+
+	audioBytes := []byte{}
+	outputFormat := requestedFormat
+	realAudio := false
+	engine := "synthetic"
+	providerUsed := requestedProvider
+	synthesisError := ""
+	debug := map[string]any{"engine": "synthetic"}
+
+	switch requestedProvider {
+	case "kittentts":
+		var err error
+		audioBytes, outputFormat, debug, err = s.runKittenTTSSynthesis(text, requestedFormat)
+		if err != nil {
+			synthesisError = err.Error()
+		} else {
+			realAudio = true
+			engine = "kittentts"
+		}
+	case "native":
+		audioBytes = buildSyntheticTTSWave(text)
+		outputFormat = "wav"
+		engine = "native-synthetic"
+	case "openai-voice", "elevenlabs":
+		synthesisError = fmt.Sprintf("%s real synthesis bridge is not configured in this runtime", requestedProvider)
+	default:
+		synthesisError = fmt.Sprintf("provider %s is not implemented", requestedProvider)
+	}
+
+	if synthesisError != "" && requireRealAudio {
+		return nil, &dispatchError{
+			Code:    -32050,
+			Message: "real tts synthesis failed",
+			Details: map[string]any{
+				"provider": requestedProvider,
+				"error":    synthesisError,
+			},
+		}
+	}
+
+	if len(audioBytes) == 0 {
+		audioBytes = buildSyntheticTTSWave(text)
+		outputFormat = "wav"
+		if providerUsed != "native" {
+			providerUsed = "native"
+		}
+		engine = "synthetic-fallback"
+	}
+
+	audioRef := fmt.Sprintf("memory://tts/%d.%s", time.Now().UTC().UnixNano(), outputFormat)
+	return map[string]any{
+		"ok":                true,
+		"text":              text,
+		"requestedProvider": requestedProvider,
+		"provider":          providerUsed,
+		"audioRef":          audioRef,
+		"bytes":             len(audioBytes),
+		"audioBase64":       base64.StdEncoding.EncodeToString(audioBytes),
+		"outputFormat":      outputFormat,
+		"realAudio":         realAudio,
+		"engine":            engine,
+		"fallback":          providerUsed != requestedProvider,
+		"synthesisError":    synthesisError,
+		"synthesizedAt":     time.Now().UTC().Format(time.RFC3339),
+		"debug":             debug,
+	}, nil
 }
 
 func (s *Server) handleCompatModelsList(params map[string]any) (map[string]any, *dispatchError) {
