@@ -29,9 +29,10 @@ type compatState struct {
 	presence map[string]any
 	events   []map[string]any
 
-	models                []map[string]any
-	telegramModelByTarget map[string]string
-	telegramAuthByTarget  map[string]string
+	models                   []map[string]any
+	telegramModelByTarget    map[string]string
+	telegramProviderByTarget map[string]string
+	telegramAuthByTarget     map[string]string
 
 	agentSeq   int
 	agents     map[string]map[string]any
@@ -118,31 +119,32 @@ func newCompatState() *compatState {
 				"aliases":    []string{"instant", "mini", "fast"},
 			},
 		},
-		telegramModelByTarget: map[string]string{},
-		telegramAuthByTarget:  map[string]string{},
-		agentSeq:              0,
-		agents:                map[string]map[string]any{},
-		agentFiles:            map[string]map[string]map[string]any{},
-		skillSeq:              0,
-		installedSkills:       map[string]map[string]any{},
-		cronSeq:               0,
-		cronJobs:              map[string]map[string]any{},
-		cronRuns:              make([]map[string]any, 0, 256),
-		wizard:                map[string]any{"active": false, "step": 0, "status": "idle"},
-		devicePairSeq:         0,
-		devicePairs:           map[string]map[string]any{},
-		deviceTokenSeq:        0,
-		deviceTokens:          map[string]map[string]any{},
-		nodePairSeq:           0,
-		nodePairs:             map[string]map[string]any{},
-		nodes:                 map[string]map[string]any{"node-local": {"nodeId": "node-local", "name": "local", "status": "online"}},
-		nodeEvents:            make([]map[string]any, 0, 256),
-		approvalSeq:           0,
-		globalApprovals:       map[string]any{"mode": "prompt", "updatedAt": now},
-		nodeApprovals:         map[string]map[string]any{},
-		pendingApprovals:      map[string]map[string]any{},
-		configOverlay:         map[string]any{},
-		sessionTombstones:     map[string]bool{},
+		telegramModelByTarget:    map[string]string{},
+		telegramProviderByTarget: map[string]string{},
+		telegramAuthByTarget:     map[string]string{},
+		agentSeq:                 0,
+		agents:                   map[string]map[string]any{},
+		agentFiles:               map[string]map[string]map[string]any{},
+		skillSeq:                 0,
+		installedSkills:          map[string]map[string]any{},
+		cronSeq:                  0,
+		cronJobs:                 map[string]map[string]any{},
+		cronRuns:                 make([]map[string]any, 0, 256),
+		wizard:                   map[string]any{"active": false, "step": 0, "status": "idle"},
+		devicePairSeq:            0,
+		devicePairs:              map[string]map[string]any{},
+		deviceTokenSeq:           0,
+		deviceTokens:             map[string]map[string]any{},
+		nodePairSeq:              0,
+		nodePairs:                map[string]map[string]any{},
+		nodes:                    map[string]map[string]any{"node-local": {"nodeId": "node-local", "name": "local", "status": "online"}},
+		nodeEvents:               make([]map[string]any, 0, 256),
+		approvalSeq:              0,
+		globalApprovals:          map[string]any{"mode": "prompt", "updatedAt": now},
+		nodeApprovals:            map[string]map[string]any{},
+		pendingApprovals:         map[string]map[string]any{},
+		configOverlay:            map[string]any{},
+		sessionTombstones:        map[string]bool{},
 	}
 }
 
@@ -174,6 +176,109 @@ func normalizeModelAlias(value string) string {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	replacer := strings.NewReplacer("_", "-", ".", "-", " ", "-", "/", "-")
 	return replacer.Replace(normalized)
+}
+
+func normalizeProviderAlias(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "openai", "chatgpt-web", "chatgpt.com":
+		return "chatgpt"
+	default:
+		return normalized
+	}
+}
+
+func (c *compatState) listModelProviders() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(c.models))
+	for _, item := range c.models {
+		provider := normalizeProviderAlias(toString(item["provider"], ""))
+		if provider == "" {
+			continue
+		}
+		if _, ok := seen[provider]; ok {
+			continue
+		}
+		seen[provider] = struct{}{}
+		out = append(out, provider)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (c *compatState) listModelIDsForProvider(provider string) []string {
+	normalizedProvider := normalizeProviderAlias(provider)
+	if normalizedProvider == "" {
+		return c.listModelIDs()
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make([]string, 0, len(c.models))
+	for _, item := range c.models {
+		catalogProvider := normalizeProviderAlias(toString(item["provider"], ""))
+		if catalogProvider != normalizedProvider {
+			continue
+		}
+		modelID := strings.ToLower(strings.TrimSpace(toString(item["id"], "")))
+		if modelID == "" {
+			continue
+		}
+		out = append(out, modelID)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (c *compatState) defaultModelForProvider(provider string) (string, bool) {
+	normalizedProvider := normalizeProviderAlias(provider)
+	if normalizedProvider == "" {
+		return "", false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, item := range c.models {
+		catalogProvider := normalizeProviderAlias(toString(item["provider"], ""))
+		if catalogProvider != normalizedProvider {
+			continue
+		}
+		modelID := strings.ToLower(strings.TrimSpace(toString(item["id"], "")))
+		if modelID == "" {
+			continue
+		}
+		return modelID, true
+	}
+	return "", false
+}
+
+func (c *compatState) hasModelProvider(provider string) bool {
+	_, ok := c.defaultModelForProvider(provider)
+	return ok
+}
+
+func (c *compatState) lookupModelDescriptor(model string) (map[string]any, bool) {
+	modelID, _, ok := c.resolveModelChoice(model)
+	if !ok {
+		return map[string]any{}, false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, item := range c.models {
+		if strings.EqualFold(toString(item["id"], ""), modelID) {
+			return cloneMap(item), true
+		}
+	}
+	return map[string]any{}, false
+}
+
+func (c *compatState) providerForModel(model string) string {
+	descriptor, ok := c.lookupModelDescriptor(model)
+	if !ok {
+		return ""
+	}
+	return normalizeProviderAlias(toString(descriptor["provider"], ""))
 }
 
 func (c *compatState) resolveModelChoice(model string) (string, string, bool) {
@@ -252,27 +357,78 @@ func (c *compatState) nextTelegramModel(target string) string {
 	return c.setTelegramModel(target, models[nextIndex])
 }
 
+func (c *compatState) getTelegramModelProvider(target string) string {
+	targetKey := strings.ToLower(strings.TrimSpace(target))
+	c.mu.RLock()
+	provider := normalizeProviderAlias(c.telegramProviderByTarget[targetKey])
+	model := strings.ToLower(strings.TrimSpace(c.telegramModelByTarget[targetKey]))
+	c.mu.RUnlock()
+	if provider != "" {
+		return provider
+	}
+	if descriptorProvider := c.providerForModel(model); descriptorProvider != "" {
+		return descriptorProvider
+	}
+	return "chatgpt"
+}
+
 func (c *compatState) getTelegramModel(target string) string {
 	targetKey := strings.ToLower(strings.TrimSpace(target))
 	c.mu.RLock()
 	model := strings.ToLower(strings.TrimSpace(c.telegramModelByTarget[targetKey]))
 	c.mu.RUnlock()
 	if model == "" {
+		provider := c.getTelegramModelProvider(target)
+		if fallback, ok := c.defaultModelForProvider(provider); ok {
+			return fallback
+		}
 		return "gpt-5.2"
 	}
 	return model
 }
 
-func (c *compatState) setTelegramModel(target string, model string) string {
+func (c *compatState) setTelegramModelSelection(target string, provider string, model string) (string, string) {
 	targetKey := strings.ToLower(strings.TrimSpace(target))
 	normalized := strings.ToLower(strings.TrimSpace(model))
 	if normalized == "" {
 		normalized = "gpt-5.2"
 	}
+	normalizedProvider := normalizeProviderAlias(provider)
+	if normalizedProvider == "" {
+		normalizedProvider = c.providerForModel(normalized)
+	}
+	if normalizedProvider == "" {
+		normalizedProvider = "chatgpt"
+	}
 	c.mu.Lock()
 	c.telegramModelByTarget[targetKey] = normalized
+	c.telegramProviderByTarget[targetKey] = normalizedProvider
 	c.mu.Unlock()
-	return normalized
+	return normalizedProvider, normalized
+}
+
+func (c *compatState) setTelegramModel(target string, model string) string {
+	provider := c.getTelegramModelProvider(target)
+	if matchedProvider := c.providerForModel(model); matchedProvider != "" {
+		provider = matchedProvider
+	}
+	_, selected := c.setTelegramModelSelection(target, provider, model)
+	return selected
+}
+
+func (c *compatState) getTelegramModelSelection(target string) (string, string) {
+	provider := c.getTelegramModelProvider(target)
+	model := c.getTelegramModel(target)
+	if provider == "" {
+		provider = c.providerForModel(model)
+	}
+	if provider == "" {
+		provider = "chatgpt"
+	}
+	if model == "" {
+		model = "gpt-5.2"
+	}
+	return provider, model
 }
 
 func (c *compatState) getTelegramAuth(target string) string {

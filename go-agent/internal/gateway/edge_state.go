@@ -104,6 +104,9 @@ func (e *edgeState) enclaveStatus() map[string]any {
 	if len(e.lastEnclaveProof) > 0 {
 		out["lastProofAt"] = toString(e.lastEnclaveProof["issuedAt"], "")
 		out["lastChallenge"] = toString(e.lastEnclaveProof["challenge"], "")
+		out["lastProof"] = cloneMap(e.lastEnclaveProof)
+	} else {
+		out["lastProof"] = map[string]any{}
 	}
 	return out
 }

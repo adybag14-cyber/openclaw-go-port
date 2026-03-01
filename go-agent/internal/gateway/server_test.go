@@ -531,6 +531,7 @@ func TestTelegramCommandFlowModelAuthTTS(t *testing.T) {
 	cfg.Runtime.StatePath = "memory://test-telegram-commands"
 	cfg.Channels.Telegram.BotToken = "telegram-bot-token"
 	cfg.Channels.Telegram.DefaultTarget = "chat-1"
+	cfg.Security.LoopGuardEnabled = false
 
 	s := New(cfg, buildinfo.Default())
 	defer s.Close()
@@ -606,6 +607,61 @@ func TestTelegramCommandFlowModelAuthTTS(t *testing.T) {
 	}
 	if toString(modelNextMeta["currentModel"], "") == "" {
 		t.Fatalf("expected currentModel for model.next")
+	}
+
+	modelListProviderResult := runCommand("tg-cmd-model-list-provider", "/model list chatgpt")
+	modelListProviderReceipt, _ := modelListProviderResult["result"].(map[string]any)
+	modelListProviderMeta, _ := modelListProviderReceipt["metadata"].(map[string]any)
+	if modelListProviderMeta["type"] != "model.list" {
+		t.Fatalf("expected model.list metadata, got %v", modelListProviderMeta["type"])
+	}
+	if toString(modelListProviderMeta["requestedProvider"], "") != "chatgpt" {
+		t.Fatalf("expected requestedProvider=chatgpt, got %v", modelListProviderMeta["requestedProvider"])
+	}
+	if available, ok := modelListProviderMeta["availableModels"].([]any); !ok || len(available) == 0 {
+		t.Fatalf("expected non-empty provider model list")
+	}
+
+	modelProviderScopedResult := runCommand("tg-cmd-model-provider-scope", "/model chatgpt/gpt-5.2-thinking")
+	modelProviderScopedReceipt, _ := modelProviderScopedResult["result"].(map[string]any)
+	modelProviderScopedMeta, _ := modelProviderScopedReceipt["metadata"].(map[string]any)
+	if modelProviderScopedMeta["type"] != "model.set" {
+		t.Fatalf("expected provider scoped model.set metadata, got %v", modelProviderScopedMeta["type"])
+	}
+	if modelProviderScopedMeta["currentProvider"] != "chatgpt" {
+		t.Fatalf("expected currentProvider=chatgpt, got %v", modelProviderScopedMeta["currentProvider"])
+	}
+	if modelProviderScopedMeta["currentModel"] != "gpt-5.2-thinking" {
+		t.Fatalf("expected currentModel gpt-5.2-thinking, got %v", modelProviderScopedMeta["currentModel"])
+	}
+	if matched, _ := modelProviderScopedMeta["matchedCatalogModel"].(bool); !matched {
+		t.Fatalf("expected matchedCatalogModel=true for catalog model")
+	}
+
+	modelCustomOverrideResult := runCommand("tg-cmd-model-custom", "/model chatgpt edge-experimental")
+	modelCustomOverrideReceipt, _ := modelCustomOverrideResult["result"].(map[string]any)
+	modelCustomOverrideMeta, _ := modelCustomOverrideReceipt["metadata"].(map[string]any)
+	if modelCustomOverrideMeta["type"] != "model.set" {
+		t.Fatalf("expected custom override model.set metadata, got %v", modelCustomOverrideMeta["type"])
+	}
+	if modelCustomOverrideMeta["currentModel"] != "edge-experimental" {
+		t.Fatalf("expected custom currentModel edge-experimental, got %v", modelCustomOverrideMeta["currentModel"])
+	}
+	if custom, _ := modelCustomOverrideMeta["customOverride"].(bool); !custom {
+		t.Fatalf("expected customOverride=true for non-catalog provider model")
+	}
+
+	modelProviderDefaultResult := runCommand("tg-cmd-model-provider-default", "/model chatgpt")
+	modelProviderDefaultReceipt, _ := modelProviderDefaultResult["result"].(map[string]any)
+	modelProviderDefaultMeta, _ := modelProviderDefaultReceipt["metadata"].(map[string]any)
+	if modelProviderDefaultMeta["type"] != "model.set" {
+		t.Fatalf("expected provider default model.set metadata, got %v", modelProviderDefaultMeta["type"])
+	}
+	if modelProviderDefaultMeta["currentProvider"] != "chatgpt" {
+		t.Fatalf("expected provider default currentProvider=chatgpt, got %v", modelProviderDefaultMeta["currentProvider"])
+	}
+	if modelProviderDefaultMeta["currentModel"] != "gpt-5.2" {
+		t.Fatalf("expected provider default currentModel=gpt-5.2, got %v", modelProviderDefaultMeta["currentModel"])
 	}
 
 	authStartResult := runCommand("tg-cmd-auth-start", "/auth")
@@ -1126,6 +1182,144 @@ func TestEdgePhase7MethodMatrix(t *testing.T) {
 		})
 		result := assertRPCResult(t, frame)
 		check.assert(t, result)
+	}
+}
+
+func TestEdgePhase7RichParityPayloads(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-edge-phase7-rich"
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	routerFrame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-rich-router",
+		"method": "edge.router.plan",
+		"params": map[string]any{
+			"objective": "latency",
+			"provider":  "openai",
+			"model":     "gpt-5.2-pro",
+			"message":   "optimize route for heavy reasoning",
+		},
+	})
+	router := assertRPCResult(t, routerFrame)
+	selected, ok := router["selected"].(map[string]any)
+	if !ok {
+		t.Fatalf("edge.router.plan should include selected payload")
+	}
+	if toString(selected["provider"], "") != "chatgpt" {
+		t.Fatalf("expected provider alias normalization to chatgpt, got %v", selected["provider"])
+	}
+	if chain, ok := router["recommendedProviderChain"].([]any); !ok || len(chain) == 0 {
+		t.Fatalf("edge.router.plan should include recommended provider chain")
+	}
+
+	wasmFrame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-rich-wasm",
+		"method": "edge.wasm.marketplace.list",
+		"params": map[string]any{},
+	})
+	wasm := assertRPCResult(t, wasmFrame)
+	if moduleCount, _ := wasm["moduleCount"].(float64); int(moduleCount) < 1 {
+		t.Fatalf("expected moduleCount >= 1, got %v", wasm["moduleCount"])
+	}
+	builder, ok := wasm["builder"].(map[string]any)
+	if !ok || toString(builder["mode"], "") == "" {
+		t.Fatalf("edge.wasm.marketplace.list should include builder metadata")
+	}
+
+	meshFrame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-rich-mesh",
+		"method": "edge.mesh.status",
+		"params": map[string]any{},
+	})
+	mesh := assertRPCResult(t, meshFrame)
+	if _, ok := mesh["meshHealth"].(map[string]any); !ok {
+		t.Fatalf("edge.mesh.status should include meshHealth")
+	}
+	if _, ok := mesh["routes"].([]any); !ok {
+		t.Fatalf("edge.mesh.status should include routes array")
+	}
+
+	homoFrame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-rich-homo-cipher",
+		"method": "edge.homomorphic.compute",
+		"params": map[string]any{
+			"keyId":       "key-1",
+			"operation":   "sum",
+			"ciphertexts": []any{"enc:a", "enc:b", "enc:c"},
+		},
+	})
+	homo := assertRPCResult(t, homoFrame)
+	if mode, _ := homo["mode"].(string); mode != "ciphertext" {
+		t.Fatalf("expected ciphertext mode, got %v", homo["mode"])
+	}
+	if toString(homo["resultCiphertext"], "") == "" {
+		t.Fatalf("expected resultCiphertext in ciphertext mode")
+	}
+
+	finetuneStatusFrame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-rich-finetune-status",
+		"method": "edge.finetune.status",
+		"params": map[string]any{},
+	})
+	finetuneStatus := assertRPCResult(t, finetuneStatusFrame)
+	if feature, _ := finetuneStatus["feature"].(string); feature == "" {
+		t.Fatalf("edge.finetune.status should include feature")
+	}
+	if _, ok := finetuneStatus["jobStats"].(map[string]any); !ok {
+		t.Fatalf("edge.finetune.status should include jobStats")
+	}
+
+	revenueFrame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-rich-revenue",
+		"method": "edge.marketplace.revenue.preview",
+		"params": map[string]any{
+			"units": 5,
+			"price": 1.1,
+		},
+	})
+	revenue := assertRPCResult(t, revenueFrame)
+	if modules, ok := revenue["modules"].([]any); !ok || len(modules) == 0 {
+		t.Fatalf("edge.marketplace.revenue.preview should include module payouts")
+	}
+
+	clusterFrame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-rich-cluster",
+		"method": "edge.finetune.cluster.plan",
+		"params": map[string]any{
+			"workers":       3,
+			"datasetShards": 6,
+		},
+	})
+	cluster := assertRPCResult(t, clusterFrame)
+	if assignments, ok := cluster["assignments"].([]any); !ok || len(assignments) == 0 {
+		t.Fatalf("edge.finetune.cluster.plan should include assignments")
+	}
+
+	alignFrame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-rich-align",
+		"method": "edge.alignment.evaluate",
+		"params": map[string]any{
+			"input":  "validate release",
+			"values": []any{"privacy", "safety"},
+			"strict": true,
+			"task":   "prepare release",
+			"action": "ship candidate build",
+		},
+	})
+	align := assertRPCResult(t, alignFrame)
+	if recommendation, _ := align["recommendation"].(string); recommendation == "" {
+		t.Fatalf("edge.alignment.evaluate should include recommendation")
 	}
 }
 

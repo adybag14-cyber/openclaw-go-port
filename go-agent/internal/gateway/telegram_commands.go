@@ -66,53 +66,282 @@ func (s *Server) handleTelegramCommand(job scheduler.Job, message string) (map[s
 }
 
 func (s *Server) handleTelegramModelCommand(target string, args []string) (channels.SendReceipt, error) {
-	current := s.compat.getTelegramModel(target)
+	currentProvider, currentModel := s.compat.getTelegramModelSelection(target)
 	descriptors := s.compat.listModelDescriptors()
-	if len(args) == 0 || strings.EqualFold(args[0], "list") || strings.EqualFold(args[0], "status") {
+	availableProviders := s.compat.listModelProviders()
+
+	if len(args) == 0 || strings.EqualFold(args[0], "status") {
 		available := s.compat.listModelIDs()
-		return telegramCommandReceipt(target, fmt.Sprintf("Current model: `%s`\nAvailable: %s", current, strings.Join(available, ", ")), map[string]any{
+		return telegramCommandReceipt(target, fmt.Sprintf("Current model: `%s/%s`\nAvailable providers: %s", currentProvider, currentModel, strings.Join(availableProviders, ", ")), map[string]any{
 			"type":            "model.status",
-			"currentModel":    current,
+			"currentModel":    currentModel,
+			"currentProvider": currentProvider,
+			"modelRef":        fmt.Sprintf("%s/%s", currentProvider, currentModel),
 			"availableModels": available,
+			"providers":       availableProviders,
 			"models":          descriptors,
 		}), nil
 	}
 
 	action := strings.ToLower(strings.TrimSpace(args[0]))
 	switch action {
+	case "list":
+		if len(args) < 2 {
+			return telegramCommandReceipt(target, fmt.Sprintf("Providers: %s\nUse `/model list <provider>` for full model IDs.", strings.Join(availableProviders, ", ")), map[string]any{
+				"type":            "model.list",
+				"providers":       availableProviders,
+				"availableModels": s.compat.listModelIDs(),
+				"models":          descriptors,
+			}), nil
+		}
+		requestedProvider := normalizeProviderAlias(args[1])
+		filteredDescriptors := filterModelDescriptorsByProvider(descriptors, requestedProvider)
+		filteredIDs := descriptorIDs(filteredDescriptors)
+		if len(filteredDescriptors) == 0 {
+			return telegramCommandReceipt(target, fmt.Sprintf("No models found for provider `%s`.", requestedProvider), map[string]any{
+				"type":              "model.list",
+				"requestedProvider": requestedProvider,
+				"providers":         availableProviders,
+				"availableModels":   []string{},
+				"models":            []map[string]any{},
+			}), nil
+		}
+		return telegramCommandReceipt(target, fmt.Sprintf("Models for `%s`: %s", requestedProvider, strings.Join(filteredIDs, ", ")), map[string]any{
+			"type":              "model.list",
+			"requestedProvider": requestedProvider,
+			"providers":         availableProviders,
+			"availableModels":   filteredIDs,
+			"models":            filteredDescriptors,
+		}), nil
 	case "next":
 		selected := s.compat.nextTelegramModel(target)
-		return telegramCommandReceipt(target, fmt.Sprintf("Model advanced to `%s` for `%s`.", selected, target), map[string]any{
-			"type":         "model.next",
-			"currentModel": selected,
-			"target":       target,
+		selectedProvider := s.compat.getTelegramModelProvider(target)
+		return telegramCommandReceipt(target, fmt.Sprintf("Model advanced to `%s/%s` for `%s`.", selectedProvider, selected, target), map[string]any{
+			"type":            "model.next",
+			"provider":        selectedProvider,
+			"currentProvider": selectedProvider,
+			"currentModel":    selected,
+			"modelRef":        fmt.Sprintf("%s/%s", selectedProvider, selected),
+			"target":          target,
 		}), nil
 	case "reset":
-		selected := s.compat.setTelegramModel(target, "gpt-5.2")
-		return telegramCommandReceipt(target, fmt.Sprintf("Model reset to `%s` for `%s`.", selected, target), map[string]any{
-			"type":         "model.reset",
-			"currentModel": selected,
-			"target":       target,
+		selectedProvider, selected := s.compat.setTelegramModelSelection(target, "chatgpt", "gpt-5.2")
+		return telegramCommandReceipt(target, fmt.Sprintf("Model reset to `%s/%s` for `%s`.", selectedProvider, selected, target), map[string]any{
+			"type":            "model.reset",
+			"provider":        selectedProvider,
+			"currentProvider": selectedProvider,
+			"currentModel":    selected,
+			"modelRef":        fmt.Sprintf("%s/%s", selectedProvider, selected),
+			"target":          target,
+		}), nil
+	}
+
+	requestedProvider, requestedModel, providerScoped := parseProviderScopedModelArgs(args)
+	if providerScoped {
+		if requestedProvider == "" {
+			return telegramCommandReceipt(target, "Provider is required. Usage: `/model <provider>/<model>` or `/model <provider> <model>`.", map[string]any{
+				"type":   "model.invalid",
+				"target": target,
+				"error":  "missing_provider",
+			}), nil
+		}
+		if requestedModel == "" {
+			defaultModel, ok := s.compat.defaultModelForProvider(requestedProvider)
+			if !ok {
+				return telegramCommandReceipt(target, fmt.Sprintf("Provider `%s` has no catalog models. Run `/model list` first.", requestedProvider), map[string]any{
+					"type":              "model.invalid",
+					"target":            target,
+					"requestedProvider": requestedProvider,
+					"error":             "missing_provider_model",
+				}), nil
+			}
+			selectedProvider, selectedModel := s.compat.setTelegramModelSelection(target, requestedProvider, defaultModel)
+			return telegramCommandReceipt(target, fmt.Sprintf("Model set to `%s/%s` for `%s`.", selectedProvider, selectedModel, target), map[string]any{
+				"type":                "model.set",
+				"target":              target,
+				"requestedProvider":   requestedProvider,
+				"currentProvider":     selectedProvider,
+				"currentModel":        selectedModel,
+				"modelRef":            fmt.Sprintf("%s/%s", selectedProvider, selectedModel),
+				"matchedCatalogModel": true,
+			}), nil
+		}
+		selectedModel, matchedCatalogModel, aliasUsed := resolveModelForProvider(descriptors, requestedProvider, requestedModel)
+		if !matchedCatalogModel && !s.compat.hasModelProvider(requestedProvider) {
+			return telegramCommandReceipt(target, fmt.Sprintf("Unknown provider `%s`. Available providers: %s", requestedProvider, strings.Join(availableProviders, ", ")), map[string]any{
+				"type":              "model.invalid",
+				"target":            target,
+				"requestedProvider": requestedProvider,
+				"providers":         availableProviders,
+			}), nil
+		}
+		selectedProvider, selected := s.compat.setTelegramModelSelection(target, requestedProvider, selectedModel)
+		message := fmt.Sprintf("Model set to `%s/%s` for `%s`.", selectedProvider, selected, target)
+		if !matchedCatalogModel {
+			message += "\nNote: custom model override applied (not found in catalog)."
+		}
+		return telegramCommandReceipt(target, message, map[string]any{
+			"type":                "model.set",
+			"target":              target,
+			"requestedProvider":   requestedProvider,
+			"requestedModel":      requestedModel,
+			"requested":           strings.TrimSpace(strings.Join(args, " ")),
+			"aliasUsed":           aliasUsed,
+			"currentProvider":     selectedProvider,
+			"currentModel":        selected,
+			"modelRef":            fmt.Sprintf("%s/%s", selectedProvider, selected),
+			"matchedCatalogModel": matchedCatalogModel,
+			"customOverride":      !matchedCatalogModel,
 		}), nil
 	}
 
 	resolvedModel, aliasUsed, ok := s.compat.resolveModelChoice(action)
 	if !ok {
+		if defaultModel, providerMatch := s.compat.defaultModelForProvider(action); providerMatch {
+			selectedProvider, selectedModel := s.compat.setTelegramModelSelection(target, action, defaultModel)
+			return telegramCommandReceipt(target, fmt.Sprintf("Model set to `%s/%s` for `%s`.", selectedProvider, selectedModel, target), map[string]any{
+				"type":                "model.set",
+				"target":              target,
+				"requestedProvider":   selectedProvider,
+				"currentProvider":     selectedProvider,
+				"currentModel":        selectedModel,
+				"modelRef":            fmt.Sprintf("%s/%s", selectedProvider, selectedModel),
+				"matchedCatalogModel": true,
+			}), nil
+		}
 		available := s.compat.listModelIDs()
 		return telegramCommandReceipt(target, fmt.Sprintf("Unknown model `%s`. Available: %s", action, strings.Join(available, ", ")), map[string]any{
 			"type":            "model.invalid",
 			"requestedModel":  action,
 			"availableModels": available,
+			"providers":       availableProviders,
 		}), nil
 	}
-	selected := s.compat.setTelegramModel(target, resolvedModel)
-	return telegramCommandReceipt(target, fmt.Sprintf("Model set to `%s` for `%s`.", selected, target), map[string]any{
-		"type":         "model.set",
-		"requested":    action,
-		"aliasUsed":    aliasUsed,
-		"currentModel": selected,
-		"target":       target,
+	resolvedProvider := s.compat.providerForModel(resolvedModel)
+	if resolvedProvider == "" {
+		resolvedProvider = currentProvider
+	}
+	selectedProvider, selectedModel := s.compat.setTelegramModelSelection(target, resolvedProvider, resolvedModel)
+	return telegramCommandReceipt(target, fmt.Sprintf("Model set to `%s/%s` for `%s`.", selectedProvider, selectedModel, target), map[string]any{
+		"type":            "model.set",
+		"requested":       action,
+		"aliasUsed":       aliasUsed,
+		"provider":        selectedProvider,
+		"currentProvider": selectedProvider,
+		"currentModel":    selectedModel,
+		"modelRef":        fmt.Sprintf("%s/%s", selectedProvider, selectedModel),
+		"target":          target,
 	}), nil
+}
+
+func parseProviderScopedModelArgs(args []string) (string, string, bool) {
+	if len(args) == 0 {
+		return "", "", false
+	}
+	first := strings.TrimSpace(args[0])
+	if first == "" {
+		return "", "", false
+	}
+	if providerRaw, modelRaw, ok := strings.Cut(first, "/"); ok {
+		model := strings.TrimSpace(modelRaw)
+		if len(args) > 1 {
+			model = strings.TrimSpace(model + " " + strings.Join(args[1:], " "))
+		}
+		return normalizeProviderAlias(providerRaw), model, true
+	}
+	if len(args) >= 2 {
+		model := strings.TrimSpace(strings.Join(args[1:], " "))
+		return normalizeProviderAlias(first), model, true
+	}
+	return "", "", false
+}
+
+func filterModelDescriptorsByProvider(descriptors []map[string]any, provider string) []map[string]any {
+	normalizedProvider := normalizeProviderAlias(provider)
+	if normalizedProvider == "" {
+		return cloneMapList(descriptors)
+	}
+	out := make([]map[string]any, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		descriptorProvider := normalizeProviderAlias(toString(descriptor["provider"], ""))
+		if descriptorProvider != normalizedProvider {
+			continue
+		}
+		out = append(out, cloneMap(descriptor))
+	}
+	return out
+}
+
+func descriptorIDs(descriptors []map[string]any) []string {
+	out := make([]string, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		id := strings.ToLower(strings.TrimSpace(toString(descriptor["id"], "")))
+		if id == "" {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
+}
+
+func resolveModelForProvider(descriptors []map[string]any, provider string, requestedModel string) (string, bool, string) {
+	normalizedProvider := normalizeProviderAlias(provider)
+	normalizedRequested := normalizeModelAlias(requestedModel)
+	if normalizedRequested == "" {
+		return "", false, ""
+	}
+	for _, descriptor := range descriptors {
+		descriptorProvider := normalizeProviderAlias(toString(descriptor["provider"], ""))
+		if descriptorProvider != normalizedProvider {
+			continue
+		}
+		modelID := strings.ToLower(strings.TrimSpace(toString(descriptor["id"], "")))
+		if modelID == "" {
+			continue
+		}
+		if normalizeModelAlias(modelID) == normalizedRequested {
+			return modelID, true, ""
+		}
+		mode := normalizeModelAlias(toString(descriptor["mode"], ""))
+		if mode != "" && mode == normalizedRequested {
+			return modelID, true, mode
+		}
+		name := normalizeModelAlias(toString(descriptor["name"], ""))
+		if name != "" && name == normalizedRequested {
+			return modelID, true, name
+		}
+		for _, alias := range descriptorAliases(descriptor["aliases"]) {
+			if normalizeModelAlias(alias) == normalizedRequested {
+				return modelID, true, normalizeModelAlias(alias)
+			}
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(requestedModel)), false, ""
+}
+
+func descriptorAliases(raw any) []string {
+	switch values := raw.(type) {
+	case []string:
+		out := make([]string, 0, len(values))
+		for _, entry := range values {
+			if normalized := strings.TrimSpace(entry); normalized != "" {
+				out = append(out, normalized)
+			}
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(values))
+		for _, entry := range values {
+			if text, ok := entry.(string); ok {
+				if normalized := strings.TrimSpace(text); normalized != "" {
+					out = append(out, normalized)
+				}
+			}
+		}
+		return out
+	default:
+		return []string{}
+	}
 }
 
 func (s *Server) handleTelegramAuthCommand(target string, args []string) (channels.SendReceipt, error) {
@@ -138,9 +367,9 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 			}
 		}
 
-		model := s.compat.getTelegramModel(target)
+		modelProvider, model := s.compat.getTelegramModelSelection(target)
 		login := s.webLogin.Start(webbridge.StartOptions{
-			Provider: "chatgpt",
+			Provider: modelProvider,
 			Model:    model,
 		})
 		s.compat.setTelegramAuth(target, login.ID)
@@ -152,6 +381,7 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 			"verificationUri":         login.VerificationURI,
 			"verificationUriComplete": login.VerificationURIComplete,
 			"expiresAt":               login.ExpiresAt,
+			"provider":                modelProvider,
 			"model":                   model,
 			"status":                  login.Status,
 		}), nil
