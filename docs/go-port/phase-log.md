@@ -954,3 +954,16 @@
   - `openclaw-go-linux-amd64`
   - `openclaw-go-android-arm64`
   - `SHA256SUMS.txt`
+
+### Post-v2 Continuation - v2.6.1-go Go-Only Mainline Cleanup
+
+- Created immutable Rust archive refs before cleanup:
+  - branch: `rust-archive-pre-go-only-v2.6.0-go`
+  - tag: `rust-archive-pre-go-only-v2.6.0-go`
+- Removed Rust payload from `main`:
+  - Rust runtime source tree (`src/*.rs`)
+  - Rust manifests/toolchain files (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `deny.toml`, `openclaw-rs.example.toml`)
+  - Rust-only CI/workflow + release-plan issue template
+  - Rust-only deploy parity stack and parity gate scripts
+  - Rust-era planning docs that were tied to pre-Go runtime shipping
+- Updated mainline docs to reflect Go-only runtime path and archive ref.

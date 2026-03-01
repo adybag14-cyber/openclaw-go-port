@@ -5,6 +5,22 @@
 ### Highlights
 - No unreleased changes.
 
+## v2.6.1-go - 2026-03-01
+
+### Highlights
+- Completed Go-only repository cleanup on `main`.
+- Archived Rust-era tree before cleanup:
+  - branch/tag: `rust-archive-pre-go-only-v2.6.0-go`
+- Removed Rust runtime source/manifests/workflows/deploy/parity scripts from `main`.
+- Updated documentation to point to archive refs and Go-only operational path.
+- Added Go CI workflow for mainline validation.
+
+### Validation
+- Dockerized Go validation:
+  - `go test ./...`
+  - `go vet ./...`
+- Mainline release/build scripts remain Go-only under `go-agent/scripts`.
+
 ## v2.6.0-go - 2026-03-01
 
 ### Highlights

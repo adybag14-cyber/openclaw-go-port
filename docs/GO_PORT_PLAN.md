@@ -1,9 +1,12 @@
 # OpenClaw Go Port Master Plan
 
+> Status update (2026-03-01): Rust cutover is complete, and Rust code has been archived from `main`.
+> Archive ref: `rust-archive-pre-go-only-v2.6.0-go`.
+
 ## Objective
 
-Port the full `openclaw-rust` runtime to Go with end-to-end parity, no feature regressions, and production-grade validation gates.  
-`v1.0.0-go` will not be released until all phases are completed and parity is explicitly marked 100%.
+Port the full `openclaw-rust` runtime to Go with end-to-end parity, no feature regressions, and production-grade validation gates.
+This objective is now complete on `main`, with ongoing Go-only hardening and feature expansion.
 
 ## Critical Points
 

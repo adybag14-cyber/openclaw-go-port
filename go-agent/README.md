@@ -8,7 +8,7 @@ Channel adapters include:
 ## Validate with Dockerized Go
 
 ```bash
-docker run --rm -v "$PWD/go-agent:/work" -w /work golang:1.22 sh -lc "export PATH=/usr/local/go/bin:$PATH; go test ./... && go vet ./..."
+docker run --rm -v "$PWD/go-agent:/work" -w /work golang:1.25 sh -lc "export PATH=/usr/local/go/bin:$PATH; go test ./... && go vet ./..."
 ```
 
 ## CLI Diagnostics
@@ -23,13 +23,13 @@ docker run --rm -v "$PWD/go-agent:/work" -w /work golang:1.22 sh -lc "export PAT
 Windows PowerShell:
 
 ```powershell
-pwsh ./scripts/build-matrix.ps1 -Version 2.6.0
+pwsh ./scripts/build-matrix.ps1 -Version 2.6.1
 ```
 
 POSIX shell:
 
 ```bash
-sh ./scripts/build-matrix.sh 2.6.0
+sh ./scripts/build-matrix.sh 2.6.1
 ```
 
 Artifacts include:

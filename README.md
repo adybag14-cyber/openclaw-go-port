@@ -2,7 +2,7 @@
 
 OpenClaw is now fully ported to Go in this repository.
 
-Current release: `v2.6.0-go`
+Current release: `v2.6.1-go`
 
 ## Status
 
@@ -10,7 +10,7 @@ Current release: `v2.6.0-go`
 - Rust/Go RPC contract parity: `133/133` methods.
 - CP gate suite: `CP0` through `CP9` passing.
 - Cross-platform artifacts published for Windows, Linux, and Android arm64.
-- Multi-channel adapter breadth expanded in Go runtime (`v2.6.0-go` scope):
+- Multi-channel adapter breadth expanded in Go runtime (`v2.6.x-go` scope):
   - `telegram`, `whatsapp`, `discord`, `slack`, `feishu`, `qq`, `wework`, `dingtalk`, `infoflow`, `googlechat`, `teams`, `matrix`, `signal`, `line`, `mattermost`, `imessage`, plus `webchat` and `cli`.
 
 Parity evidence:
@@ -25,12 +25,8 @@ Short answer: for running and releasing the Go port, Rust is no longer required.
 
 - Required for production/runtime: No.
 - Required for Go builds/tests/releases: No.
-- Why Rust files still exist in this repo:
-  - historical parity traceability
-  - migration audit context
-  - reference during transition period
-
-If you want, the Rust tree can be removed in a cleanup phase after we archive the parity/migration docs you want to keep.
+- Rust runtime/code status on `main`: removed.
+- Archive reference for full Rust-era tree: branch/tag `rust-archive-pre-go-only-v2.6.0-go`.
 
 ## Quick Start
 
@@ -87,14 +83,14 @@ docker run --rm -v "${PWD}/go-agent:/work" -w /work golang:1.25 sh -lc "export P
 
 ```powershell
 Set-Location go-agent
-./scripts/build-matrix.ps1 -Version 2.6.0 -OutputDir ../dist/release-v2.6.0-go-assets
+./scripts/build-matrix.ps1 -Version 2.6.1 -OutputDir ../dist/release-v2.6.1-go-assets
 ```
 
 ### POSIX shell
 
 ```bash
 cd go-agent
-sh ./scripts/build-matrix.sh 2.6.0 ../dist/release-v2.6.0-go-assets
+sh ./scripts/build-matrix.sh 2.6.1 ../dist/release-v2.6.1-go-assets
 ```
 
 Outputs:
@@ -111,9 +107,9 @@ Build defaults:
 
 ```powershell
 git push origin main
-git tag v2.6.0-go
-git push origin v2.6.0-go
-gh release create v2.6.0-go dist/release-v2.6.0-go-assets/openclaw-go-windows-amd64.exe dist/release-v2.6.0-go-assets/openclaw-go-linux-amd64 dist/release-v2.6.0-go-assets/openclaw-go-android-arm64 dist/release-v2.6.0-go-assets/SHA256SUMS.txt -R adybag14-cyber/openclaw-go-port --title "OpenClaw Go v2.6.0" --notes-file docs/go-port/release-v2.6.0-go.md
+git tag v2.6.1-go
+git push origin v2.6.1-go
+gh release create v2.6.1-go dist/release-v2.6.1-go-assets/openclaw-go-windows-amd64.exe dist/release-v2.6.1-go-assets/openclaw-go-linux-amd64 dist/release-v2.6.1-go-assets/openclaw-go-android-arm64 dist/release-v2.6.1-go-assets/SHA256SUMS.txt -R adybag14-cyber/openclaw-go-port --title "OpenClaw Go v2.6.1" --notes-file docs/go-port/release-v2.6.1-go.md
 ```
 
 ## Telegram and Auth Flows
@@ -163,11 +159,11 @@ auth_prefix = "Bearer"
 - `docs/go-port/`: phase plans, logs, and release notes.
 - `parity/`: parity harness, CP gates, generated scoreboards/reports.
 - `dist/`: built artifacts (not usually committed).
-- `src/`, `tests/`, Rust manifests: legacy/reference from pre-Go cutover.
+- `wit/`: interface definitions used by wasm/runtime surfaces.
 
 ## Additional Docs
 
-- Go release notes: `docs/go-port/release-v2.6.0-go.md`
+- Go release notes: `docs/go-port/release-v2.6.1-go.md`
 - Port plan: `docs/GO_PORT_PLAN.md`
 - Phase checklist: `docs/go-port/phase-checklist.md`
 - Go changelog entries: `CHANGELOG.md`

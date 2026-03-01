@@ -65,3 +65,10 @@
 - [x] Full cross-platform and VM validation
 - [x] Final parity sign-off (100%)
 - [x] Build and publish `v1.0.0-go`
+
+## Phase 9: Go-Only Mainline Cleanup
+
+- [x] Create archive branch/tag for Rust tree (`rust-archive-pre-go-only-v2.6.0-go`)
+- [x] Remove Rust runtime/manifests/workflows from `main`
+- [x] Keep Go runtime/docs/release flow as the only active implementation path
+- [x] Re-validate Go runtime after cleanup
