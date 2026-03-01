@@ -347,6 +347,244 @@ func TestBrowserRequestDisabledBridgeFailsCompletionPayload(t *testing.T) {
 	}
 }
 
+func TestToolFamilyAliasesReadWriteEditAndBrowser(t *testing.T) {
+	rt := NewDefault()
+	path := filepath.Join(t.TempDir(), "tool-family.txt")
+
+	_, err := rt.Invoke(context.Background(), Request{
+		Tool: "write",
+		Input: map[string]any{
+			"path":    path,
+			"content": "hello beta",
+		},
+	})
+	if err != nil {
+		t.Fatalf("write alias failed: %v", err)
+	}
+	_, err = rt.Invoke(context.Background(), Request{
+		Tool: "edit",
+		Input: map[string]any{
+			"path":    path,
+			"oldText": "beta",
+			"newText": "gamma",
+		},
+	})
+	if err != nil {
+		t.Fatalf("edit alias failed: %v", err)
+	}
+	readRes, err := rt.Invoke(context.Background(), Request{
+		Tool: "read",
+		Input: map[string]any{
+			"path": path,
+		},
+	})
+	if err != nil {
+		t.Fatalf("read alias failed: %v", err)
+	}
+	readOut, _ := readRes.Output.(map[string]any)
+	if got := toString(readOut["content"], ""); got != "hello gamma" {
+		t.Fatalf("unexpected read alias content: %q", got)
+	}
+
+	browserRes, err := rt.Invoke(context.Background(), Request{
+		Tool: "browser",
+		Input: map[string]any{
+			"action": "open",
+			"url":    "https://example.com",
+		},
+	})
+	if err != nil {
+		t.Fatalf("browser family open failed: %v", err)
+	}
+	browserOut, _ := browserRes.Output.(map[string]any)
+	if ok, _ := browserOut["opened"].(bool); !ok {
+		t.Fatalf("expected browser open result, got %v", browserOut)
+	}
+}
+
+func TestMessageAndSessionsFamiliesLifecycle(t *testing.T) {
+	rt := NewDefault()
+
+	first, err := rt.Invoke(context.Background(), Request{
+		Tool:      "message",
+		SessionID: "sess-family",
+		Input: map[string]any{
+			"action":  "send",
+			"channel": "telegram",
+			"message": "hello runtime",
+		},
+	})
+	if err != nil {
+		t.Fatalf("message send failed: %v", err)
+	}
+	firstOut, _ := first.Output.(map[string]any)
+	entry, _ := firstOut["entry"].(map[string]any)
+	messageID := toString(entry["id"], "")
+	if messageID == "" {
+		t.Fatalf("expected message id in entry: %v", firstOut)
+	}
+
+	_, err = rt.Invoke(context.Background(), Request{
+		Tool:      "message",
+		SessionID: "sess-family",
+		Input: map[string]any{
+			"action":  "send",
+			"channel": "telegram",
+			"message": "second payload",
+		},
+	})
+	if err != nil {
+		t.Fatalf("second message send failed: %v", err)
+	}
+
+	_, err = rt.Invoke(context.Background(), Request{
+		Tool: "message",
+		Input: map[string]any{
+			"action":    "react",
+			"messageId": messageID,
+			"reaction":  "thumbs_up",
+		},
+	})
+	if err != nil {
+		t.Fatalf("message react failed: %v", err)
+	}
+
+	readRes, err := rt.Invoke(context.Background(), Request{
+		Tool: "message",
+		Input: map[string]any{
+			"action":    "read",
+			"messageId": messageID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("message read failed: %v", err)
+	}
+	readOut, _ := readRes.Output.(map[string]any)
+	msgObj, _ := readOut["message"].(map[string]any)
+	if got := toString(msgObj["message"], ""); got != "hello runtime" {
+		t.Fatalf("unexpected message read payload: %q", got)
+	}
+
+	searchRes, err := rt.Invoke(context.Background(), Request{
+		Tool: "message",
+		Input: map[string]any{
+			"action": "search",
+			"query":  "second",
+		},
+	})
+	if err != nil {
+		t.Fatalf("message search failed: %v", err)
+	}
+	searchOut, _ := searchRes.Output.(map[string]any)
+	if count := toInt(searchOut["count"], 0); count != 1 {
+		t.Fatalf("expected 1 search hit, got %v", searchOut["count"])
+	}
+
+	usageRes, err := rt.Invoke(context.Background(), Request{
+		Tool: "sessions",
+		Input: map[string]any{
+			"action":    "usage",
+			"sessionId": "sess-family",
+		},
+	})
+	if err != nil {
+		t.Fatalf("sessions usage failed: %v", err)
+	}
+	usageOut, _ := usageRes.Output.(map[string]any)
+	if messages := toInt(usageOut["messages"], 0); messages != 2 {
+		t.Fatalf("expected 2 session messages, got %v", usageOut["messages"])
+	}
+
+	resetRes, err := rt.Invoke(context.Background(), Request{
+		Tool: "sessions",
+		Input: map[string]any{
+			"action":    "reset",
+			"sessionId": "sess-family",
+		},
+	})
+	if err != nil {
+		t.Fatalf("sessions reset failed: %v", err)
+	}
+	resetOut, _ := resetRes.Output.(map[string]any)
+	if removed := toInt(resetOut["removedEntries"], 0); removed != 2 {
+		t.Fatalf("expected removedEntries=2, got %v", resetOut["removedEntries"])
+	}
+
+	_, err = rt.Invoke(context.Background(), Request{
+		Tool: "message",
+		Input: map[string]any{
+			"action":    "delete",
+			"messageId": messageID,
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected delete to fail after session reset removed message")
+	}
+}
+
+func TestGatewayCanvasWasmRoutinesFamilies(t *testing.T) {
+	rt := NewDefault()
+
+	gatewayRes, err := rt.Invoke(context.Background(), Request{
+		Tool: "gateway",
+		Input: map[string]any{
+			"action": "status",
+		},
+	})
+	if err != nil {
+		t.Fatalf("gateway status failed: %v", err)
+	}
+	gatewayOut, _ := gatewayRes.Output.(map[string]any)
+	if ok, _ := gatewayOut["ok"].(bool); !ok {
+		t.Fatalf("gateway status expected ok=true: %v", gatewayOut)
+	}
+
+	canvasRes, err := rt.Invoke(context.Background(), Request{
+		Tool: "canvas",
+		Input: map[string]any{
+			"action":   "present",
+			"frameRef": "canvas://one",
+		},
+	})
+	if err != nil {
+		t.Fatalf("canvas present failed: %v", err)
+	}
+	canvasOut, _ := canvasRes.Output.(map[string]any)
+	if frame := toString(canvasOut["frameRef"], ""); frame != "canvas://one" {
+		t.Fatalf("unexpected canvas frameRef: %q", frame)
+	}
+
+	wasmRes, err := rt.Invoke(context.Background(), Request{
+		Tool: "wasm",
+		Input: map[string]any{
+			"action": "inspect",
+			"module": "sample.wasm",
+		},
+	})
+	if err != nil {
+		t.Fatalf("wasm inspect failed: %v", err)
+	}
+	wasmOut, _ := wasmRes.Output.(map[string]any)
+	if mode := toString(wasmOut["runtimeMode"], ""); mode != "wazero" {
+		t.Fatalf("unexpected wasm runtime mode: %q", mode)
+	}
+
+	routineRes, err := rt.Invoke(context.Background(), Request{
+		Tool: "routines",
+		Input: map[string]any{
+			"action": "run",
+			"name":   "nightly-validate",
+		},
+	})
+	if err != nil {
+		t.Fatalf("routines run failed: %v", err)
+	}
+	routineOut, _ := routineRes.Output.(map[string]any)
+	if state := toString(routineOut["state"], ""); state != "completed" {
+		t.Fatalf("unexpected routines state: %q", state)
+	}
+}
+
 func shellCommand() string {
 	if runtime.GOOS == "windows" {
 		return "cmd"

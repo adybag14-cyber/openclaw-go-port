@@ -743,3 +743,23 @@
   - `/usr/local/go/bin/gofmt -w ...`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation (Issue #11) - Slice 1: Tool Runtime Family-Depth Expansion
+
+- Expanded Go runtime to accept Rust-style top-level tool families:
+  - `read`, `write`, `edit`, `apply_patch`, `exec`, `process`, `gateway`, `sessions`, `message`, `browser`, `canvas`, `nodes`, `wasm`, `routines`, `system`.
+- Added message runtime lifecycle behavior with in-memory state:
+  - send/poll/read/edit/delete/react/reactions/search actions.
+  - deterministic message ids, reaction mutation, and bounded runtime retention.
+- Added sessions runtime lifecycle behavior backed by runtime message state:
+  - list/history/reset/usage actions with per-session aggregation and token counting.
+- Added family routing for browser/process/nodes/canvas/wasm/routines/gateway surfaces so top-level tool contracts execute concrete behavior rather than unsupported errors.
+- Expanded runtime catalog to advertise both family-level and dot-tool surfaces.
+- Added test coverage:
+  - alias/family routing validation (`read/write/edit/browser`).
+  - message + sessions lifecycle integration (`send/react/search/usage/reset`).
+  - gateway/canvas/wasm/routines family smoke coverage.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`

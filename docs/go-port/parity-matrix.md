@@ -52,3 +52,4 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 - Slice 14 complete (Issue #8): operational parity cleanup (status phase marker no longer scaffolded + `update.run`/`poll` lifecycle contracts with transition-aware job tracking).
 - Slice 15 complete (Issue #9): residual simulated/scaffold semantic cleanup (deterministic enclave mode resolution, local-heuristic voice fallback semantics, and scaffold wording removal in gateway/runtime metadata).
 - Slice 16 complete (Issue #10): compat dispatch tightening (generic fallback removed; unsupported compat methods now return strict `-32601`, with supported-method coverage guard against silent fallback drift).
+- Slice 17 complete (Issue #11): tool runtime depth expansion (Rust-style top-level tool families + in-memory message/session lifecycle actions + family integration coverage in Go runtime).
