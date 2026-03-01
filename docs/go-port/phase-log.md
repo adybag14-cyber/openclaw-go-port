@@ -763,3 +763,26 @@
   - `/usr/local/go/bin/gofmt -w ...`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation (Issue #12) - Slice 1: Provider/Auth Catalog Widening (Qwen Copaw Compatibility)
+
+- Expanded provider alias normalization in Go gateway parity surfaces:
+  - added Rust-aligned alias handling for major auth/runtime providers (`openai/chatgpt`, `codex`, `claude`, `gemini`, `qwen`, `minimax`, `kimi`, `opencode`, `zhipuai`, `zai`, `inception`).
+  - added explicit Qwen Copaw compatibility aliases (`copaw`, `qwen-copaw`, `qwen-agent`) mapping to canonical `qwen`.
+- Added OAuth provider catalog contract in Go gateway compat layer:
+  - canonical provider metadata now includes `id`, `providerId`, `name/displayName`, `aliases`, `verificationUrl`, `supportsBrowserSession`, and `apiKeyConfigured`.
+  - wired expanded catalog into `auth.oauth.providers`.
+- Expanded Telegram auth provider visibility:
+  - `/auth providers` now uses the catalog payload (instead of a minimal hard-coded list), preserving API key configured state per canonical provider.
+- Expanded browser login provider routing:
+  - login manager now normalizes provider aliases before session creation and resolves provider-specific verification URIs for expanded providers, including Qwen Copaw aliases.
+- Added test coverage:
+  - provider alias normalization includes Copaw/Qwen mappings.
+  - auth provider payload verifies Qwen alias metadata and configured-key propagation from Copaw alias.
+  - compat `auth.oauth.providers` returns expanded catalog.
+  - `/auth start` parser accepts Copaw alias and resolves to canonical Qwen provider.
+  - browser login verification URI tests cover extended provider aliases.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`

@@ -188,13 +188,7 @@ func normalizeModelAlias(value string) string {
 }
 
 func normalizeProviderAlias(value string) string {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	switch normalized {
-	case "openai", "chatgpt-web", "chatgpt.com":
-		return "chatgpt"
-	default:
-		return normalized
-	}
+	return normalizeProviderID(value)
 }
 
 func (c *compatState) listModelProviders() []string {
@@ -983,9 +977,9 @@ func (s *Server) handleCompatMethod(ctx context.Context, requestID string, canon
 		return s.handleCompatCronRuns(params), nil
 	case "auth.oauth.providers":
 		return map[string]any{
-			"providers": []map[string]any{
-				{"id": "chatgpt", "name": "ChatGPT Web", "supportsBrowserSession": true},
-			},
+			"providers": authProviderCatalogPayload(func(provider string) bool {
+				return s.compat.hasProviderAPIKey(provider)
+			}),
 		}, nil
 	case "auth.oauth.import":
 		return s.handleCompatOAuthImport(params)

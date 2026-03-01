@@ -421,14 +421,9 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 			"target": target,
 		}), nil
 	case "providers":
-		providers := make([]map[string]any, 0, 8)
-		for _, provider := range knownAuthProviders() {
-			providers = append(providers, map[string]any{
-				"id":                     provider,
-				"supportsBrowserSession": strings.EqualFold(provider, "chatgpt") || strings.EqualFold(provider, "codex"),
-				"apiKeyConfigured":       s.compat.hasProviderAPIKey(provider),
-			})
-		}
+		providers := authProviderCatalogPayload(func(provider string) bool {
+			return s.compat.hasProviderAPIKey(provider)
+		})
 		return telegramCommandReceipt(target, formatAuthProvidersMessage(providers), map[string]any{
 			"type":      "auth.providers",
 			"target":    target,
@@ -1201,7 +1196,12 @@ func extractAuthCode(input string) string {
 }
 
 func knownAuthProviders() []string {
-	return []string{"chatgpt", "codex", "openrouter", "kimi", "qwen"}
+	entries := oauthProviderCatalogEntries()
+	providers := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		providers = append(providers, entry.ID)
+	}
+	return providers
 }
 
 func formatAuthProvidersMessage(providers []map[string]any) string {

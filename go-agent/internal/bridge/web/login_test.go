@@ -73,9 +73,14 @@ func TestProviderVerificationURI(t *testing.T) {
 	}{
 		{provider: "chatgpt", prefix: "https://chatgpt.com/"},
 		{provider: "codex", prefix: "https://chatgpt.com/"},
+		{provider: "openai-codex", prefix: "https://chatgpt.com/"},
 		{provider: "openrouter", prefix: "https://openrouter.ai/"},
 		{provider: "kimi", prefix: "https://kimi.com/"},
 		{provider: "qwen", prefix: "https://chat.qwen.ai/"},
+		{provider: "qwen-cli", prefix: "https://chat.qwen.ai/"},
+		{provider: "copaw", prefix: "https://chat.qwen.ai/"},
+		{provider: "gemini", prefix: "https://aistudio.google.com/"},
+		{provider: "claude", prefix: "https://claude.ai/"},
 	}
 	for _, tc := range cases {
 		session := m.Start(StartOptions{Provider: tc.provider, Model: "auto"})

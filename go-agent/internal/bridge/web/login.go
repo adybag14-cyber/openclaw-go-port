@@ -61,7 +61,7 @@ func NewManager(ttl time.Duration) *Manager {
 }
 
 func (m *Manager) Start(opts StartOptions) Session {
-	provider := strings.ToLower(strings.TrimSpace(opts.Provider))
+	provider := normalizeProviderAlias(opts.Provider)
 	if provider == "" {
 		provider = "chatgpt"
 	}
@@ -302,16 +302,60 @@ func (m *Manager) applyExpiry(session Session) Session {
 }
 
 func providerVerificationURI(provider string) string {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
+	switch normalizeProviderAlias(provider) {
+	case "claude":
+		return "https://claude.ai/"
+	case "gemini":
+		return "https://aistudio.google.com/"
 	case "openrouter":
 		return "https://openrouter.ai/"
+	case "opencode":
+		return "https://opencode.ai/"
+	case "minimax":
+		return "https://chat.minimax.io/"
 	case "kimi":
 		return "https://kimi.com/"
+	case "zhipuai":
+		return "https://open.bigmodel.cn/"
+	case "zai":
+		return "https://chat.z.ai/"
+	case "inception":
+		return "https://chat.inceptionlabs.ai/"
 	case "qwen":
 		return "https://chat.qwen.ai/"
 	case "chatgpt", "codex", "openai":
 		fallthrough
 	default:
 		return "https://chatgpt.com/"
+	}
+}
+
+func normalizeProviderAlias(provider string) string {
+	normalized := strings.ToLower(strings.TrimSpace(provider))
+	switch normalized {
+	case "openai", "openai-chatgpt", "chatgpt-web", "chatgpt.com":
+		return "chatgpt"
+	case "openai-codex", "codex-cli", "openai-codex-cli":
+		return "codex"
+	case "anthropic", "claude-cli", "claude-code", "claude-desktop":
+		return "claude"
+	case "google", "google-gemini", "google-gemini-cli", "gemini-cli":
+		return "gemini"
+	case "qwen-portal", "qwen-cli", "qwen-chat", "qwen35", "qwen3.5", "qwen-3.5", "copaw", "qwen-copaw", "qwen-agent":
+		return "qwen"
+	case "minimax-portal", "minimax-cli":
+		return "minimax"
+	case "kimi-code", "kimi-coding", "kimi-for-coding":
+		return "kimi"
+	case "opencode-zen", "opencode-ai", "opencode-go", "opencode_free", "opencodefree":
+		return "opencode"
+	case "zhipu", "zhipu-ai", "bigmodel", "bigmodel-cn", "zhipuai-coding", "zhipu-coding":
+		return "zhipuai"
+	case "z.ai", "z-ai", "zaiweb", "zai-web":
+		return "zai"
+	case "inception-labs", "inceptionlabs", "mercury", "mercury2", "mercury-2":
+		return "inception"
+	default:
+		return normalized
 	}
 }
