@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/buildinfo"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/config"
+	"github.com/gorilla/websocket"
 )
 
 func TestHealthEndpoint(t *testing.T) {
@@ -43,6 +45,59 @@ func TestHealthEndpoint(t *testing.T) {
 	if payload["status"] != "ok" {
 		t.Fatalf("unexpected health status: %v", payload["status"])
 	}
+}
+
+func TestWebSocketRPCDispatch(t *testing.T) {
+	s := New(config.Default(), buildinfo.Default())
+	defer s.Close()
+
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	httpURL, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatalf("parse test server url failed: %v", err)
+	}
+	wsURL := "ws://" + httpURL.Host + "/ws"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("websocket dial failed: %v", err)
+	}
+	defer conn.Close()
+
+	if err := conn.WriteJSON(map[string]any{
+		"type":   "req",
+		"id":     "ws-health",
+		"method": "health",
+		"params": map[string]any{},
+	}); err != nil {
+		t.Fatalf("write ws frame failed: %v", err)
+	}
+
+	var success map[string]any
+	if err := conn.ReadJSON(&success); err != nil {
+		t.Fatalf("read ws health response failed: %v", err)
+	}
+	result, ok := success["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected ws result object, got %v", success)
+	}
+	if status := toString(result["status"], ""); status != "ok" {
+		t.Fatalf("expected ws health status ok, got %v", result["status"])
+	}
+
+	if err := conn.WriteJSON(map[string]any{
+		"type":   "event",
+		"id":     "ws-invalid",
+		"method": "health",
+	}); err != nil {
+		t.Fatalf("write ws invalid frame failed: %v", err)
+	}
+	var failure map[string]any
+	if err := conn.ReadJSON(&failure); err != nil {
+		t.Fatalf("read ws invalid response failed: %v", err)
+	}
+	assertRPCErrorCode(t, failure, -32600)
 }
 
 func TestConnectAuthAndSessionLifecycle(t *testing.T) {
@@ -586,6 +641,36 @@ func TestTelegramCommandFlowModelAuthTTS(t *testing.T) {
 		return result
 	}
 
+	setAPIKeyResult := runCommand("tg-cmd-set-api-key", "/set api key openrouter openrouter_test_key_123")
+	setAPIKeyReceipt, _ := setAPIKeyResult["result"].(map[string]any)
+	setAPIKeyMeta, _ := setAPIKeyReceipt["metadata"].(map[string]any)
+	if setAPIKeyMeta["type"] != "set.api_key" {
+		t.Fatalf("expected set.api_key metadata, got %v", setAPIKeyMeta["type"])
+	}
+	if setAPIKeyMeta["provider"] != "openrouter" {
+		t.Fatalf("expected set api key provider openrouter, got %v", setAPIKeyMeta["provider"])
+	}
+	if stored, _ := setAPIKeyMeta["stored"].(bool); !stored {
+		t.Fatalf("expected set api key stored=true")
+	}
+
+	authProvidersResult := runCommand("tg-cmd-auth-providers", "/auth providers")
+	authProvidersReceipt, _ := authProvidersResult["result"].(map[string]any)
+	authProvidersMeta, _ := authProvidersReceipt["metadata"].(map[string]any)
+	if authProvidersMeta["type"] != "auth.providers" {
+		t.Fatalf("expected auth.providers metadata, got %v", authProvidersMeta["type"])
+	}
+	if providers, ok := authProvidersMeta["providers"].([]any); !ok || len(providers) == 0 {
+		t.Fatalf("expected non-empty auth provider list")
+	}
+
+	authHelpResult := runCommand("tg-cmd-auth-help", "/auth help")
+	authHelpReceipt, _ := authHelpResult["result"].(map[string]any)
+	authHelpMeta, _ := authHelpReceipt["metadata"].(map[string]any)
+	if authHelpMeta["type"] != "auth.help" {
+		t.Fatalf("expected auth.help metadata, got %v", authHelpMeta["type"])
+	}
+
 	modelResult := runCommand("tg-cmd-model", "/model pro")
 	modelReceipt, _ := modelResult["result"].(map[string]any)
 	modelMeta, _ := modelReceipt["metadata"].(map[string]any)
@@ -678,6 +763,23 @@ func TestTelegramCommandFlowModelAuthTTS(t *testing.T) {
 		t.Fatalf("expected verificationUriComplete in auth.start metadata")
 	}
 
+	authWaitResult := runCommand("tg-cmd-auth-wait", "/auth wait --timeout 1")
+	authWaitReceipt, _ := authWaitResult["result"].(map[string]any)
+	authWaitMeta, _ := authWaitReceipt["metadata"].(map[string]any)
+	if authWaitMeta["type"] != "auth.wait" {
+		t.Fatalf("expected auth.wait metadata, got %v", authWaitMeta["type"])
+	}
+
+	authBridgeResult := runCommand("tg-cmd-auth-bridge", "/auth bridge")
+	authBridgeReceipt, _ := authBridgeResult["result"].(map[string]any)
+	authBridgeMeta, _ := authBridgeReceipt["metadata"].(map[string]any)
+	if authBridgeMeta["type"] != "auth.bridge" {
+		t.Fatalf("expected auth.bridge metadata, got %v", authBridgeMeta["type"])
+	}
+	if _, ok := authBridgeMeta["bridge"].(map[string]any); !ok {
+		t.Fatalf("expected bridge object in auth.bridge metadata")
+	}
+
 	authURLResult := runCommand("tg-cmd-auth-url", "/auth url")
 	authURLReceipt, _ := authURLResult["result"].(map[string]any)
 	authURLMeta, _ := authURLReceipt["metadata"].(map[string]any)
@@ -714,6 +816,23 @@ func TestTelegramCommandFlowModelAuthTTS(t *testing.T) {
 	}
 	if ttsProviderMeta["provider"] != "openai-voice" {
 		t.Fatalf("expected provider openai-voice, got %v", ttsProviderMeta["provider"])
+	}
+
+	ttsProvidersResult := runCommand("tg-cmd-tts-providers", "/tts providers")
+	ttsProvidersReceipt, _ := ttsProvidersResult["result"].(map[string]any)
+	ttsProvidersMeta, _ := ttsProvidersReceipt["metadata"].(map[string]any)
+	if ttsProvidersMeta["type"] != "tts.providers" {
+		t.Fatalf("expected tts.providers metadata, got %v", ttsProvidersMeta["type"])
+	}
+	if providers, ok := ttsProvidersMeta["providers"].([]any); !ok || len(providers) == 0 {
+		t.Fatalf("expected non-empty tts provider list")
+	}
+
+	ttsHelpResult := runCommand("tg-cmd-tts-help", "/tts help")
+	ttsHelpReceipt, _ := ttsHelpResult["result"].(map[string]any)
+	ttsHelpMeta, _ := ttsHelpReceipt["metadata"].(map[string]any)
+	if ttsHelpMeta["type"] != "tts.help" {
+		t.Fatalf("expected tts.help metadata, got %v", ttsHelpMeta["type"])
 	}
 
 	ttsSayResult := runCommand("tg-cmd-tts-say", "/tts say hello from telegram")

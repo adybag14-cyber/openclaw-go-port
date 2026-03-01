@@ -31,7 +31,16 @@ import (
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/state"
 	toolruntime "github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/tools/runtime"
 	wasmruntime "github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/wasm/runtime"
+	"github.com/gorilla/websocket"
 )
+
+var rpcWebsocketUpgrader = websocket.Upgrader{
+	ReadBufferSize:  4096,
+	WriteBufferSize: 4096,
+	CheckOrigin: func(_ *http.Request) bool {
+		return true
+	},
+}
 
 type Server struct {
 	cfg       config.Config
@@ -112,6 +121,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/rpc", s.handleRPC)
+	mux.HandleFunc("/ws", s.handleWS)
 	return mux
 }
 
@@ -213,6 +223,78 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, protocol.RPCSuccessResponseFrame(req.ID, result))
+}
+
+func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	conn, err := rpcWebsocketUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	for {
+		messageType, raw, err := conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		if messageType != websocket.TextMessage && messageType != websocket.BinaryMessage {
+			continue
+		}
+
+		var frame map[string]any
+		if err := json.Unmarshal(raw, &frame); err != nil {
+			_ = conn.WriteJSON(protocol.RPCErrorResponseFrame(
+				"unknown",
+				-32700,
+				"parse error",
+				nil,
+			))
+			continue
+		}
+
+		if protocol.FrameKindOf(frame) != protocol.FrameKindReq {
+			_ = conn.WriteJSON(protocol.RPCErrorResponseFrame(
+				"unknown",
+				-32600,
+				"invalid request frame",
+				map[string]any{
+					"expectedType": "req",
+				},
+			))
+			continue
+		}
+
+		req := protocol.ParseRPCRequest(frame)
+		if req == nil {
+			_ = conn.WriteJSON(protocol.RPCErrorResponseFrame(
+				"unknown",
+				-32600,
+				"invalid request frame",
+				map[string]any{
+					"reason": "missing method",
+				},
+			))
+			continue
+		}
+
+		params := asMap(req.Params)
+		resolved := s.methods.Resolve(req.Method)
+		result, rpcErr := s.dispatchRPC(r.Context(), req.ID, resolved.Canonical, params)
+		if rpcErr != nil {
+			_ = conn.WriteJSON(protocol.RPCErrorResponseFrame(
+				req.ID,
+				rpcErr.Code,
+				rpcErr.Message,
+				rpcErr.Details,
+			))
+			continue
+		}
+		_ = conn.WriteJSON(protocol.RPCSuccessResponseFrame(req.ID, result))
+	}
 }
 
 type dispatchError struct {

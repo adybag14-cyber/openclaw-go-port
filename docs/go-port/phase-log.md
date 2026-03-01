@@ -510,3 +510,28 @@
   - `gofmt -w ./cmd ./internal`
   - `go test ./...`
   - `go vet ./...`
+
+### Post-v2 Continuation (Issue #5) - Slice 1: WebSocket Gateway + Telegram Control Parity
+
+- Added WebSocket RPC gateway endpoint parity:
+  - `/ws` route now upgrades and handles request/response loops with Rust-compatible RPC envelopes.
+  - validates frame kind (`type=req`) and returns canonical parse/invalid request errors.
+- Expanded Telegram parity command surface:
+  - new `/set api key <provider> <key>` flow with provider key storage metadata.
+  - new auth actions: `/auth help`, `/auth providers`, `/auth wait ...`, `/auth bridge`.
+  - auth completion now accepts callback URLs and extracts code query params.
+  - new TTS actions: `/tts providers`, `/tts help`.
+- Added compatibility state storage for provider API keys.
+- Added/expanded tests:
+  - `TestWebSocketRPCDispatch`
+  - expanded telegram command integration coverage in `TestTelegramCommandFlowModelAuthTTS`.
+- Validation completed (Dockerized Go toolchain with explicit Go path):
+  - `/usr/local/go/bin/go mod tidy`
+  - `/usr/local/go/bin/gofmt -w ./cmd ./internal`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`
+- Release artifacts built for `v2.0.4-go`:
+  - `openclaw-go-windows-amd64.exe`
+  - `openclaw-go-linux-amd64`
+  - `openclaw-go-android-arm64`
+  - `SHA256SUMS.txt`

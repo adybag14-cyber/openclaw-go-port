@@ -33,6 +33,7 @@ type compatState struct {
 	telegramModelByTarget    map[string]string
 	telegramProviderByTarget map[string]string
 	telegramAuthByTarget     map[string]string
+	providerAPIKeys          map[string]string
 
 	agentSeq   int
 	agents     map[string]map[string]any
@@ -122,6 +123,7 @@ func newCompatState() *compatState {
 		telegramModelByTarget:    map[string]string{},
 		telegramProviderByTarget: map[string]string{},
 		telegramAuthByTarget:     map[string]string{},
+		providerAPIKeys:          map[string]string{},
 		agentSeq:                 0,
 		agents:                   map[string]map[string]any{},
 		agentFiles:               map[string]map[string]map[string]any{},
@@ -444,6 +446,29 @@ func (c *compatState) setTelegramAuth(target string, loginID string) {
 	c.mu.Lock()
 	c.telegramAuthByTarget[targetKey] = strings.TrimSpace(loginID)
 	c.mu.Unlock()
+}
+
+func (c *compatState) setProviderAPIKey(provider string, apiKey string) bool {
+	normalizedProvider := normalizeProviderAlias(provider)
+	normalizedKey := strings.TrimSpace(apiKey)
+	if normalizedProvider == "" || normalizedKey == "" {
+		return false
+	}
+	c.mu.Lock()
+	c.providerAPIKeys[normalizedProvider] = normalizedKey
+	c.mu.Unlock()
+	return true
+}
+
+func (c *compatState) hasProviderAPIKey(provider string) bool {
+	normalizedProvider := normalizeProviderAlias(provider)
+	if normalizedProvider == "" {
+		return false
+	}
+	c.mu.RLock()
+	_, ok := c.providerAPIKeys[normalizedProvider]
+	c.mu.RUnlock()
+	return ok
 }
 
 func (c *compatState) edgeTopologySnapshot() map[string]any {

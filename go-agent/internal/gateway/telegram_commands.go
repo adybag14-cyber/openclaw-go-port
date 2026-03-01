@@ -1,7 +1,11 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
+	"net/http"
+	neturl "net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,13 +40,15 @@ func (s *Server) handleTelegramCommand(job scheduler.Job, message string) (map[s
 		reply, err = s.handleTelegramModelCommand(target, parts[1:])
 	case "auth":
 		reply, err = s.handleTelegramAuthCommand(target, parts[1:])
+	case "set":
+		reply, err = s.handleTelegramSetCommand(target, parts[1:])
 	case "tts":
 		reply, err = s.handleTelegramTTSCommand(target, command, parts[1:])
 	default:
-		reply = telegramCommandReceipt(target, fmt.Sprintf("Unknown command `%s`. Supported: /model, /auth, /tts", root), map[string]any{
+		reply = telegramCommandReceipt(target, fmt.Sprintf("Unknown command `%s`. Supported: /model, /auth, /set, /tts", root), map[string]any{
 			"type":      "unknown",
 			"command":   root,
-			"supported": []string{"model", "auth", "tts"},
+			"supported": []string{"model", "auth", "set", "tts"},
 		})
 	}
 	if err != nil {
@@ -63,6 +69,47 @@ func (s *Server) handleTelegramCommand(job scheduler.Job, message string) (map[s
 		"method": job.Method,
 		"result": reply,
 	}, true, nil
+}
+
+func (s *Server) handleTelegramSetCommand(target string, args []string) (channels.SendReceipt, error) {
+	if len(args) < 4 || !strings.EqualFold(args[0], "api") || !strings.EqualFold(args[1], "key") {
+		return telegramCommandReceipt(target, "Usage: `/set api key <provider> <key>`", map[string]any{
+			"type":   "set.invalid",
+			"target": target,
+		}), nil
+	}
+	provider := normalizeProviderAlias(args[2])
+	apiKey := strings.TrimSpace(strings.Join(args[3:], " "))
+	if provider == "" || apiKey == "" {
+		return telegramCommandReceipt(target, "Usage: `/set api key <provider> <key>`", map[string]any{
+			"type":   "set.invalid",
+			"target": target,
+			"error":  "missing_provider_or_key",
+		}), nil
+	}
+	if strings.Contains(apiKey, "\n") || strings.Contains(apiKey, "\r") {
+		return telegramCommandReceipt(target, "API key must be a single line.", map[string]any{
+			"type":     "set.api_key",
+			"target":   target,
+			"provider": provider,
+			"error":    "invalid_key_format",
+		}), nil
+	}
+	if !s.compat.setProviderAPIKey(provider, apiKey) {
+		return telegramCommandReceipt(target, "Failed to store API key.", map[string]any{
+			"type":     "set.api_key",
+			"target":   target,
+			"provider": provider,
+			"error":    "store_failed",
+		}), nil
+	}
+	return telegramCommandReceipt(target, fmt.Sprintf("Provider API key saved for `%s`. You can now set a model with `/model %s/<model>`.", provider, provider), map[string]any{
+		"type":      "set.api_key",
+		"target":    target,
+		"provider":  provider,
+		"stored":    true,
+		"keyMasked": maskSecret(apiKey),
+	}), nil
 }
 
 func (s *Server) handleTelegramModelCommand(target string, args []string) (channels.SendReceipt, error) {
@@ -351,6 +398,34 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 	}
 
 	switch action {
+	case "help":
+		return telegramCommandReceipt(target, strings.Join([]string{
+			"Auth command usage:",
+			"`/auth providers`",
+			"`/auth status`",
+			"`/auth bridge`",
+			"`/auth` (start)",
+			"`/auth wait [session_id] [--timeout <seconds>]`",
+			"`/auth complete <CODE> [session_id]`",
+			"`/auth cancel`",
+		}, "\n"), map[string]any{
+			"type":   "auth.help",
+			"target": target,
+		}), nil
+	case "providers":
+		providers := make([]map[string]any, 0, 8)
+		for _, provider := range knownAuthProviders() {
+			providers = append(providers, map[string]any{
+				"id":                     provider,
+				"supportsBrowserSession": strings.EqualFold(provider, "chatgpt") || strings.EqualFold(provider, "codex"),
+				"apiKeyConfigured":       s.compat.hasProviderAPIKey(provider),
+			})
+		}
+		return telegramCommandReceipt(target, formatAuthProvidersMessage(providers), map[string]any{
+			"type":      "auth.providers",
+			"target":    target,
+			"providers": providers,
+		}), nil
 	case "start":
 		if existingID := s.compat.getTelegramAuth(target); existingID != "" {
 			if existing, ok := s.webLogin.Get(existingID); ok && existing.Status == webbridge.LoginPending {
@@ -415,6 +490,44 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 			"login":            login,
 			"expiresInSeconds": expiresInSec,
 		}), nil
+	case "wait":
+		defaultLoginID := s.compat.getTelegramAuth(target)
+		loginID, waitTimeout, waitParseErr := parseAuthWaitArgs(args[1:], defaultLoginID)
+		if waitParseErr != "" {
+			return telegramCommandReceipt(target, waitParseErr, map[string]any{
+				"type":   "auth.wait",
+				"target": target,
+				"error":  "invalid_wait_args",
+			}), nil
+		}
+		login, err := s.webLogin.Wait(context.Background(), loginID, waitTimeout)
+		if err != nil {
+			return telegramCommandReceipt(target, fmt.Sprintf("Auth wait failed: %s", err.Error()), map[string]any{
+				"type":           "auth.wait",
+				"target":         target,
+				"loginSessionId": loginID,
+				"timeoutSeconds": int(waitTimeout.Seconds()),
+				"error":          err.Error(),
+			}), nil
+		}
+		return telegramCommandReceipt(target, fmt.Sprintf("Auth wait result: `%s` (session `%s`).", login.Status, login.ID), map[string]any{
+			"type":             "auth.wait",
+			"target":           target,
+			"login":            login,
+			"expiresInSeconds": authExpiresInSeconds(login.ExpiresAt),
+			"timeoutSeconds":   int(waitTimeout.Seconds()),
+		}), nil
+	case "bridge":
+		bridgeStatus := probeBrowserBridge(s.cfg.Runtime.BrowserBridge.Enabled, s.cfg.Runtime.BrowserBridge.Endpoint, 2*time.Second)
+		message := fmt.Sprintf("Bridge `%s` (%s).", toString(bridgeStatus["status"], "unknown"), toString(bridgeStatus["endpoint"], ""))
+		if probeErr := toString(bridgeStatus["error"], ""); probeErr != "" {
+			message += fmt.Sprintf("\nProbe error: %s", probeErr)
+		}
+		return telegramCommandReceipt(target, message, map[string]any{
+			"type":   "auth.bridge",
+			"target": target,
+			"bridge": bridgeStatus,
+		}), nil
 	case "url":
 		loginID := s.compat.getTelegramAuth(target)
 		if loginID == "" {
@@ -445,6 +558,9 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 		}), nil
 	case "complete":
 		loginID := s.compat.getTelegramAuth(target)
+		if len(args) >= 3 && strings.TrimSpace(args[2]) != "" {
+			loginID = strings.TrimSpace(args[2])
+		}
 		if loginID == "" {
 			return telegramCommandReceipt(target, "No pending auth session. Run `/auth` first.", map[string]any{
 				"type":   "auth.complete",
@@ -467,7 +583,7 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 				"error":  "missing_code",
 			}), nil
 		}
-		code := strings.TrimSpace(args[1])
+		code := extractAuthCode(args[1])
 		login, err := s.webLogin.Complete(loginID, code)
 		if err != nil {
 			return telegramCommandReceipt(target, fmt.Sprintf("Auth failed: %s", err.Error()), map[string]any{
@@ -500,7 +616,7 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 			"revoked":        revoked,
 		}), nil
 	default:
-		return telegramCommandReceipt(target, "Unknown `/auth` action. Use `/auth`, `/auth status`, `/auth url`, `/auth complete <CODE>`, or `/auth cancel`.", map[string]any{
+		return telegramCommandReceipt(target, "Unknown `/auth` action. Use `/auth help` for full usage.", map[string]any{
 			"type":   "auth.invalid",
 			"target": target,
 			"action": action,
@@ -540,6 +656,22 @@ func (s *Server) handleTelegramTTSCommand(target string, rawCommand string, args
 			"target":   target,
 			"enabled":  false,
 			"provider": toString(state["provider"], "native"),
+		}), nil
+	case "providers":
+		providers := []map[string]any{
+			{"id": "native", "name": "Native Bridge", "enabled": true},
+			{"id": "elevenlabs", "name": "ElevenLabs", "enabled": false},
+			{"id": "openai-voice", "name": "OpenAI Voice", "enabled": true},
+			{"id": "edge", "name": "Edge TTS", "enabled": true},
+		}
+		lines := make([]string, 0, len(providers))
+		for _, provider := range providers {
+			lines = append(lines, fmt.Sprintf("%s (%t)", toString(provider["id"], ""), toBool(provider["enabled"], false)))
+		}
+		return telegramCommandReceipt(target, fmt.Sprintf("TTS providers: %s", strings.Join(lines, ", ")), map[string]any{
+			"type":      "tts.providers",
+			"target":    target,
+			"providers": providers,
 		}), nil
 	case "provider":
 		if len(args) < 2 {
@@ -585,8 +717,21 @@ func (s *Server) handleTelegramTTSCommand(target string, rawCommand string, args
 			"bytes":    toInt(converted["bytes"], 0),
 			"provider": toString(converted["provider"], "native"),
 		}), nil
+	case "help":
+		return telegramCommandReceipt(target, strings.Join([]string{
+			"TTS command usage:",
+			"`/tts status`",
+			"`/tts providers`",
+			"`/tts provider <name>`",
+			"`/tts on`",
+			"`/tts off`",
+			"`/tts say <text>`",
+		}, "\n"), map[string]any{
+			"type":   "tts.help",
+			"target": target,
+		}), nil
 	default:
-		return telegramCommandReceipt(target, "Unknown `/tts` action. Use `/tts status|on|off|provider|say`.", map[string]any{
+		return telegramCommandReceipt(target, "Unknown `/tts` action. Use `/tts status|providers|on|off|provider|say|help`.", map[string]any{
 			"type":   "tts.invalid",
 			"target": target,
 			"action": action,
@@ -634,4 +779,147 @@ func authExpiresInSeconds(expiresAt string) int {
 		return 0
 	}
 	return int(remaining)
+}
+
+func parseAuthWaitArgs(args []string, defaultLoginID string) (string, time.Duration, string) {
+	loginID := strings.TrimSpace(defaultLoginID)
+	timeout := 30 * time.Second
+
+	for idx := 0; idx < len(args); idx++ {
+		token := strings.TrimSpace(args[idx])
+		if token == "" {
+			continue
+		}
+		lowered := strings.ToLower(token)
+		switch {
+		case lowered == "session":
+			if idx+1 >= len(args) {
+				return "", 0, "Usage: `/auth wait [session <ID>|<ID>] [--timeout <seconds>]`"
+			}
+			idx++
+			loginID = strings.TrimSpace(args[idx])
+		case lowered == "--timeout":
+			if idx+1 >= len(args) {
+				return "", 0, "Missing timeout value. Example: `/auth wait --timeout 90`"
+			}
+			idx++
+			seconds, err := strconv.Atoi(strings.TrimSpace(args[idx]))
+			if err != nil || seconds < 1 || seconds > 900 {
+				return "", 0, "Timeout must be an integer between 1 and 900 seconds."
+			}
+			timeout = time.Duration(seconds) * time.Second
+		case strings.HasPrefix(lowered, "--timeout="):
+			raw := strings.TrimSpace(strings.TrimPrefix(lowered, "--timeout="))
+			seconds, err := strconv.Atoi(raw)
+			if err != nil || seconds < 1 || seconds > 900 {
+				return "", 0, "Timeout must be an integer between 1 and 900 seconds."
+			}
+			timeout = time.Duration(seconds) * time.Second
+		case strings.HasPrefix(lowered, "--"):
+			return "", 0, fmt.Sprintf("Unknown wait option `%s`.", token)
+		default:
+			loginID = token
+		}
+	}
+
+	if loginID == "" {
+		return "", 0, "No auth session selected. Start auth first with `/auth`."
+	}
+	return loginID, timeout, ""
+}
+
+func extractAuthCode(input string) string {
+	raw := strings.TrimSpace(input)
+	if raw == "" {
+		return ""
+	}
+	if !strings.Contains(raw, "://") {
+		return raw
+	}
+	parsed, err := neturl.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	query := parsed.Query()
+	for _, key := range []string{"openclaw_code", "code", "device_code"} {
+		if value := strings.TrimSpace(query.Get(key)); value != "" {
+			return value
+		}
+	}
+	return raw
+}
+
+func knownAuthProviders() []string {
+	return []string{"chatgpt", "codex", "openrouter", "kimi", "qwen"}
+}
+
+func formatAuthProvidersMessage(providers []map[string]any) string {
+	if len(providers) == 0 {
+		return "No auth providers configured."
+	}
+	lines := make([]string, 0, len(providers))
+	for _, provider := range providers {
+		name := toString(provider["id"], "unknown")
+		supportsBrowser := toBool(provider["supportsBrowserSession"], false)
+		keyConfigured := toBool(provider["apiKeyConfigured"], false)
+		lines = append(lines, fmt.Sprintf("%s (browser:%t, apiKey:%t)", name, supportsBrowser, keyConfigured))
+	}
+	return "Auth providers: " + strings.Join(lines, ", ")
+}
+
+func probeBrowserBridge(enabled bool, endpoint string, timeout time.Duration) map[string]any {
+	normalizedEndpoint := strings.TrimSpace(endpoint)
+	if normalizedEndpoint == "" {
+		return map[string]any{
+			"enabled":   enabled,
+			"endpoint":  normalizedEndpoint,
+			"status":    "missing-endpoint",
+			"reachable": false,
+		}
+	}
+	if !enabled {
+		return map[string]any{
+			"enabled":   enabled,
+			"endpoint":  normalizedEndpoint,
+			"status":    "disabled",
+			"reachable": false,
+		}
+	}
+
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Get(strings.TrimRight(normalizedEndpoint, "/") + "/health")
+	if err != nil {
+		return map[string]any{
+			"enabled":   enabled,
+			"endpoint":  normalizedEndpoint,
+			"status":    "unreachable",
+			"reachable": false,
+			"error":     err.Error(),
+		}
+	}
+	defer resp.Body.Close()
+	reachable := resp.StatusCode >= 200 && resp.StatusCode < 500
+	status := "reachable"
+	if !reachable {
+		status = "unhealthy"
+	}
+	return map[string]any{
+		"enabled":    enabled,
+		"endpoint":   normalizedEndpoint,
+		"status":     status,
+		"reachable":  reachable,
+		"httpStatus": resp.StatusCode,
+	}
+}
+
+func maskSecret(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	if len(runes) <= 6 {
+		return strings.Repeat("*", len(runes))
+	}
+	return string(runes[:3]) + strings.Repeat("*", len(runes)-6) + string(runes[len(runes)-3:])
 }

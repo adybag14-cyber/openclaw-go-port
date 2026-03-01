@@ -41,3 +41,4 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 - Slice 3 complete: WASM runtime depth (`wazero` compiled execution path under policy gates).
 - Slice 4 complete: doctor/security audit depth (expanded audit checks, deep probes, parity corpus tests, and `doctor.checks` diagnostics output).
 - Slice 5 complete: security audit remediation flow (`--security-audit --fix`) with persisted config fixes, policy bundle bootstrap, idempotency tests, and action-level fix reporting.
+- Slice 6 complete (Issue #5): websocket gateway parity (`/ws` request/response loop) and telegram control parity expansion (`/set api key`, `/auth providers|wait|bridge|help`, `/tts providers|help`) with integration tests.
