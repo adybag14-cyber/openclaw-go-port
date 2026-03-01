@@ -169,3 +169,42 @@ func TestExpandedModelCatalogListsProviderSpecificModels(t *testing.T) {
 		t.Fatalf("expected slash-scoped openrouter model in provider list, got %v", openRouterModels)
 	}
 }
+
+func TestCompatModelsListRejectsUnknownParams(t *testing.T) {
+	s := New(config.Default(), buildinfo.Default())
+	defer s.Close()
+
+	_, derr := s.handleCompatMethod(context.Background(), "models-list-invalid", "models.list", map[string]any{
+		"unknownField": true,
+	})
+	if derr == nil {
+		t.Fatalf("expected models.list invalid params error")
+	}
+	if derr.Code != -32602 {
+		t.Fatalf("expected -32602 for invalid models.list params, got %d", derr.Code)
+	}
+}
+
+func TestCompatModelsListProviderFilterSupportsCopawAlias(t *testing.T) {
+	s := New(config.Default(), buildinfo.Default())
+	defer s.Close()
+
+	result, derr := s.handleCompatMethod(context.Background(), "models-list-provider", "models.list", map[string]any{
+		"provider": "copaw",
+	})
+	if derr != nil {
+		t.Fatalf("models.list failed: %+v", *derr)
+	}
+	if toString(result["providerRequested"], "") != "qwen" {
+		t.Fatalf("expected providerRequested=qwen, got %v", result["providerRequested"])
+	}
+	models, ok := result["models"].([]map[string]any)
+	if !ok || len(models) == 0 {
+		t.Fatalf("expected non-empty models list for qwen provider")
+	}
+	for _, model := range models {
+		if provider := toString(model["provider"], ""); provider != "qwen" {
+			t.Fatalf("expected provider qwen in filtered result, got %q", provider)
+		}
+	}
+}

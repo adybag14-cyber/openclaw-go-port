@@ -826,3 +826,18 @@
   - `/usr/local/go/bin/gofmt -w ...`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation (Issue #15) - Slice 1: `models.list` Contract Depth
+
+- Replaced compat `models.list` inline stub with structured handler semantics:
+  - strict parameter validation with deterministic `-32602` for unknown fields.
+  - provider-scoped filtering with canonical alias normalization (including `copaw -> qwen`).
+  - deterministic model ordering (`provider`, then `id`) for stable list outputs.
+  - provider summary metadata in payload (`providers`, `providerRequested`).
+- Added parity-focused tests:
+  - invalid params rejection for `models.list`.
+  - provider filter behavior via Copaw alias ensuring returned models are Qwen-scoped.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`

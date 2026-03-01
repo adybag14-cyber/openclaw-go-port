@@ -989,16 +989,7 @@ func (s *Server) handleCompatMethod(ctx context.Context, requestID string, canon
 	case "voicewake.set":
 		return s.handleCompatVoiceWake(params), nil
 	case "models.list":
-		s.compat.mu.RLock()
-		models := make([]map[string]any, 0, len(s.compat.models))
-		for _, model := range s.compat.models {
-			models = append(models, cloneMap(model))
-		}
-		s.compat.mu.RUnlock()
-		return map[string]any{
-			"count":  len(models),
-			"models": models,
-		}, nil
+		return s.handleCompatModelsList(params)
 	case "agent.identity.get":
 		return map[string]any{
 			"id":        "openclaw-go",
@@ -1320,6 +1311,71 @@ func (s *Server) handleCompatTTSConvert(params map[string]any) map[string]any {
 		"audioRef": fmt.Sprintf("memory://tts/%d", time.Now().UTC().UnixNano()),
 		"bytes":    len(text) * 4,
 	}
+}
+
+func (s *Server) handleCompatModelsList(params map[string]any) (map[string]any, *dispatchError) {
+	allowed := map[string]struct{}{
+		"provider": {},
+		"limit":    {},
+	}
+	for key := range params {
+		if _, ok := allowed[key]; !ok {
+			return nil, &dispatchError{
+				Code:    -32602,
+				Message: fmt.Sprintf("invalid models.list params: unknown field %q", key),
+				Details: map[string]any{"field": key},
+			}
+		}
+	}
+
+	requestedProvider := normalizeProviderAlias(toString(params["provider"], ""))
+	models := s.compat.listModelDescriptors()
+	filtered := make([]map[string]any, 0, len(models))
+	for _, model := range models {
+		provider := normalizeProviderAlias(toString(model["provider"], ""))
+		if requestedProvider != "" && provider != requestedProvider {
+			continue
+		}
+		filtered = append(filtered, model)
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		pi := normalizeProviderAlias(toString(filtered[i]["provider"], ""))
+		pj := normalizeProviderAlias(toString(filtered[j]["provider"], ""))
+		if pi == pj {
+			return strings.ToLower(toString(filtered[i]["id"], "")) < strings.ToLower(toString(filtered[j]["id"], ""))
+		}
+		return pi < pj
+	})
+
+	limit := toInt(params["limit"], 0)
+	if limit > 0 && len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+
+	providers := make([]string, 0, len(filtered))
+	seen := map[string]struct{}{}
+	for _, model := range filtered {
+		provider := normalizeProviderAlias(toString(model["provider"], ""))
+		if provider == "" {
+			continue
+		}
+		if _, ok := seen[provider]; ok {
+			continue
+		}
+		seen[provider] = struct{}{}
+		providers = append(providers, provider)
+	}
+	sort.Strings(providers)
+
+	payload := map[string]any{
+		"count":  len(filtered),
+		"models": filtered,
+	}
+	if requestedProvider != "" {
+		payload["providerRequested"] = requestedProvider
+	}
+	payload["providers"] = providers
+	return payload, nil
 }
 
 func (s *Server) handleCompatVoiceWake(params map[string]any) map[string]any {
