@@ -982,11 +982,13 @@ func (b *BuiltinBridgeProvider) handleBrowserRequest(ctx context.Context, input 
 	if !hasCompletionPayload {
 		url := toString(input["url"], "")
 		method := strings.ToUpper(toString(input["method"], "GET"))
+		provider := normalizeBrowserProviderAlias(toString(input["provider"], "chatgpt"))
 		return map[string]any{
 			"status":   200,
 			"ok":       true,
 			"url":      url,
 			"method":   method,
+			"provider": provider,
 			"response": "bridge request accepted",
 		}, nil
 	}
@@ -997,6 +999,7 @@ func (b *BuiltinBridgeProvider) handleBrowserRequest(ctx context.Context, input 
 }
 
 func toBrowserCompletionPayload(input map[string]any) (map[string]any, bool) {
+	provider := normalizeBrowserProviderAlias(toString(input["provider"], "chatgpt"))
 	model := toString(input["model"], "gpt-5.2")
 	messages := normalizeCompletionMessages(input["messages"])
 	if len(messages) == 0 {
@@ -1012,6 +1015,7 @@ func toBrowserCompletionPayload(input map[string]any) (map[string]any, bool) {
 	}
 
 	payload := map[string]any{
+		"provider": provider,
 		"model":    model,
 		"messages": messages,
 	}
@@ -1069,6 +1073,36 @@ func normalizeCompletionMessages(raw any) []map[string]any {
 	}
 }
 
+func normalizeBrowserProviderAlias(provider string) string {
+	normalized := strings.ToLower(strings.TrimSpace(provider))
+	switch normalized {
+	case "", "openai", "openai-chatgpt", "chatgpt-web", "chatgpt.com":
+		return "chatgpt"
+	case "openai-codex", "codex-cli", "openai-codex-cli":
+		return "codex"
+	case "anthropic", "claude-cli", "claude-code", "claude-desktop":
+		return "claude"
+	case "google", "google-gemini", "google-gemini-cli", "gemini-cli":
+		return "gemini"
+	case "qwen-portal", "qwen-cli", "qwen-chat", "qwen35", "qwen3.5", "qwen-3.5", "copaw", "qwen-copaw", "qwen-agent":
+		return "qwen"
+	case "minimax-portal", "minimax-cli":
+		return "minimax"
+	case "kimi-code", "kimi-coding", "kimi-for-coding":
+		return "kimi"
+	case "opencode-zen", "opencode-ai", "opencode-go", "opencode_free", "opencodefree":
+		return "opencode"
+	case "zhipu", "zhipu-ai", "bigmodel", "bigmodel-cn", "zhipuai-coding", "zhipu-coding":
+		return "zhipuai"
+	case "z.ai", "z-ai", "zaiweb", "zai-web":
+		return "zai"
+	case "inception-labs", "inceptionlabs", "mercury", "mercury2", "mercury-2":
+		return "inception"
+	default:
+		return normalized
+	}
+}
+
 type bridgeHTTPError struct {
 	StatusCode int
 	Body       string
@@ -1096,11 +1130,13 @@ func (b *BuiltinBridgeProvider) invokeBrowserCompletion(ctx context.Context, pay
 		response, statusCode, err := b.postBridgeCompletion(ctx, payload)
 		if err == nil {
 			assistant := extractAssistantMessage(response)
+			provider := normalizeBrowserProviderAlias(toString(payload["provider"], "chatgpt"))
 			b.recordBridgeSuccess()
 			return map[string]any{
 				"status":        200,
 				"ok":            true,
-				"provider":      "chatgpt-browser-bridge",
+				"provider":      provider,
+				"bridge":        "browser",
 				"bridgeStatus":  statusCode,
 				"attempt":       attempt,
 				"model":         toString(response["model"], toString(payload["model"], "gpt-5.2")),

@@ -55,3 +55,4 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 - Slice 17 complete (Issue #11): tool runtime depth expansion (Rust-style top-level tool families + in-memory message/session lifecycle actions + family integration coverage in Go runtime).
 - Slice 18 complete (Issue #12): provider/auth catalog widening (Rust-aligned provider alias normalization, expanded OAuth provider catalog payloads, and Qwen `copaw` alias support across `/auth providers`, `auth.oauth.providers`, and browser-login verification routing).
 - Slice 19 complete (Issue #13): model catalog widening (Qwen/OpenCode/Inception/OpenRouter/Codex model descriptors) plus slash-scoped provider/model resolution hardening and alias-backed model matching in `resolveModelChoice`.
+- Slice 20 complete (Issue #14): provider-aware browser runtime bridge semantics (provider passthrough + alias normalization including `copaw`) for `browser.request` completion payloads and response metadata.

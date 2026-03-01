@@ -806,3 +806,23 @@
   - `/usr/local/go/bin/gofmt -w ...`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation (Issue #14) - Slice 1: Provider-Aware Browser Runtime Bridge
+
+- Expanded runtime browser completion payload contract:
+  - `browser.request` completion path now passes canonical `provider` in payload alongside `model/messages`.
+  - defaults remain backward-compatible (`provider=chatgpt`, `model=gpt-5.2`) when provider is omitted.
+- Added provider alias normalization for browser runtime surfaces:
+  - includes Rust-aligned aliases and explicit Qwen Copaw support (`copaw`, `qwen-copaw`, `qwen-agent` -> `qwen`).
+- Expanded browser runtime response metadata:
+  - completion responses now report normalized provider in `provider` with explicit bridge marker (`bridge=browser`) rather than fixed provider label.
+  - non-completion browser request responses also include normalized provider metadata.
+- Added test coverage:
+  - default non-completion browser provider behavior (`chatgpt`).
+  - completion payload provider passthrough (`copaw` input emits `qwen` payload provider).
+  - completion response provider metadata asserts normalized provider.
+  - alias normalization unit checks for Copaw and Codex alias paths.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`

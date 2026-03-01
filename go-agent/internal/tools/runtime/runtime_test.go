@@ -41,6 +41,9 @@ func TestDefaultCatalogAndInvoke(t *testing.T) {
 	if output["status"] != 200 {
 		t.Fatalf("unexpected status output: %v", output["status"])
 	}
+	if output["provider"] != "chatgpt" {
+		t.Fatalf("expected default provider chatgpt, got %v", output["provider"])
+	}
 }
 
 func TestInvokeUnknownTool(t *testing.T) {
@@ -188,6 +191,9 @@ func TestBrowserRequestCompletionUsesBridgeEndpoint(t *testing.T) {
 		if payload["model"] != "gpt-5.2" {
 			t.Fatalf("unexpected model: %v", payload["model"])
 		}
+		if payload["provider"] != "qwen" {
+			t.Fatalf("unexpected provider: %v", payload["provider"])
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"cmpl-1","model":"gpt-5.2","choices":[{"message":{"role":"assistant","content":"bridge-response"}}]}`))
 	}))
@@ -208,7 +214,8 @@ func TestBrowserRequestCompletionUsesBridgeEndpoint(t *testing.T) {
 	result, err := rt.Invoke(context.Background(), Request{
 		Tool: "browser.request",
 		Input: map[string]any{
-			"model": "gpt-5.2",
+			"provider": "copaw",
+			"model":    "gpt-5.2",
 			"messages": []map[string]any{
 				{"role": "user", "content": "hello"},
 			},
@@ -227,6 +234,9 @@ func TestBrowserRequestCompletionUsesBridgeEndpoint(t *testing.T) {
 	}
 	if output["assistantText"] != "bridge-response" {
 		t.Fatalf("unexpected assistant text: %v", output["assistantText"])
+	}
+	if output["provider"] != "qwen" {
+		t.Fatalf("expected output provider qwen, got %v", output["provider"])
 	}
 }
 
@@ -582,6 +592,15 @@ func TestGatewayCanvasWasmRoutinesFamilies(t *testing.T) {
 	routineOut, _ := routineRes.Output.(map[string]any)
 	if state := toString(routineOut["state"], ""); state != "completed" {
 		t.Fatalf("unexpected routines state: %q", state)
+	}
+}
+
+func TestNormalizeBrowserProviderAliasIncludesCopaw(t *testing.T) {
+	if got := normalizeBrowserProviderAlias("copaw"); got != "qwen" {
+		t.Fatalf("expected copaw -> qwen, got %q", got)
+	}
+	if got := normalizeBrowserProviderAlias("openai-codex"); got != "codex" {
+		t.Fatalf("expected openai-codex -> codex, got %q", got)
 	}
 }
 
