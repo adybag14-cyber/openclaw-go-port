@@ -267,3 +267,19 @@ attestation_expected_sha256 = "not-a-sha"
 		t.Fatalf("expected attestation digest validation error")
 	}
 }
+
+func TestChannelAdapterValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "openclaw-go.toml")
+	content := `
+[channels.discord]
+enabled = true
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed writing test config: %v", err)
+	}
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatalf("expected channel adapter validation error")
+	}
+}

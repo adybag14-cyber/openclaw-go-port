@@ -5,6 +5,33 @@
 ### Highlights
 - No unreleased changes.
 
+## v2.6.0-go - 2026-03-01
+
+### Highlights
+- Expanded Go runtime multi-channel adapter breadth inspired by `goclaw` integration patterns.
+- Added channel adapter support for:
+  - `whatsapp`, `discord`, `slack`, `feishu`, `qq`, `wework`, `dingtalk`, `infoflow`, `googlechat`, `teams`, `matrix`, `signal`, `line`, `mattermost`, `imessage`,
+  - in addition to existing `telegram`, `webchat`, `cli`.
+- Added reusable channel adapter configuration:
+  - `enabled`, `token`, `default_target`, `webhook_url`, `auth_header`, `auth_prefix`, `headers`.
+- Added webhook-backed delivery path and token-ready delivery mode for non-Telegram adapters.
+- Added validation guard for channel configs:
+  - enabled channel adapters now require `token` or `webhook_url`.
+- Added adapter test coverage:
+  - webhook send path,
+  - token-ready path,
+  - disabled-channel rejection,
+  - expanded status catalog.
+- Updated docs and example config for new channel adapters.
+
+### Validation
+- Dockerized formatting/test/vet:
+  - `gofmt -w` (changed files)
+  - `go test ./...`
+  - `go vet ./...`
+- Dockerized release build:
+  - `go-agent/scripts/build-matrix.sh 2.6.0 ../dist/release-v2.6.0-go-assets`
+
 ## v2.5.0-go - 2026-03-01
 
 ### Highlights

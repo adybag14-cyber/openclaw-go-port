@@ -17,6 +17,128 @@ profile = "core"
 bot_token = ""
 default_target = ""
 
+# Multi-channel adapters (v2.6.0-go)
+# Set enabled=true and provide either token or webhook_url.
+[channels.whatsapp]
+enabled = false
+token = ""
+default_target = ""
+webhook_url = ""
+auth_header = "Authorization"
+auth_prefix = "Bearer"
+
+[channels.discord]
+enabled = false
+token = ""
+default_target = ""
+webhook_url = ""
+auth_header = "Authorization"
+auth_prefix = "Bearer"
+
+[channels.slack]
+enabled = false
+token = ""
+default_target = ""
+webhook_url = ""
+auth_header = "Authorization"
+auth_prefix = "Bearer"
+
+[channels.feishu]
+enabled = false
+token = ""
+default_target = ""
+webhook_url = ""
+auth_header = "Authorization"
+auth_prefix = "Bearer"
+
+[channels.qq]
+enabled = false
+token = ""
+default_target = ""
+webhook_url = ""
+auth_header = "Authorization"
+auth_prefix = "Bearer"
+
+[channels.wework]
+enabled = false
+token = ""
+default_target = ""
+webhook_url = ""
+auth_header = "Authorization"
+auth_prefix = "Bearer"
+
+[channels.dingtalk]
+enabled = false
+token = ""
+default_target = ""
+webhook_url = ""
+auth_header = "Authorization"
+auth_prefix = "Bearer"
+
+[channels.infoflow]
+enabled = false
+token = ""
+default_target = ""
+webhook_url = ""
+auth_header = "Authorization"
+auth_prefix = "Bearer"
+
+[channels.googlechat]
+enabled = false
+token = ""
+default_target = ""
+webhook_url = ""
+auth_header = "Authorization"
+auth_prefix = "Bearer"
+
+[channels.teams]
+enabled = false
+token = ""
+default_target = ""
+webhook_url = ""
+auth_header = "Authorization"
+auth_prefix = "Bearer"
+
+[channels.matrix]
+enabled = false
+token = ""
+default_target = ""
+webhook_url = ""
+auth_header = "Authorization"
+auth_prefix = "Bearer"
+
+[channels.signal]
+enabled = false
+token = ""
+default_target = ""
+webhook_url = ""
+auth_header = "Authorization"
+auth_prefix = "Bearer"
+
+[channels.line]
+enabled = false
+token = ""
+default_target = ""
+webhook_url = ""
+auth_header = "Authorization"
+auth_prefix = "Bearer"
+
+[channels.mattermost]
+enabled = false
+token = ""
+default_target = ""
+webhook_url = ""
+auth_header = "Authorization"
+auth_prefix = "Bearer"
+
+[channels.imessage]
+enabled = false
+token = ""
+default_target = ""
+webhook_url = ""
+auth_header = "Authorization"
+auth_prefix = "Bearer"
+
 [security]
 policy_bundle_path = "memory://security-policy.json"
 default_action = "allow"

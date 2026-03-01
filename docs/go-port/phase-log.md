@@ -926,3 +926,31 @@
   - `openclaw-go-linux-amd64`
   - `openclaw-go-android-arm64`
   - `SHA256SUMS.txt`
+
+### Post-v2 Continuation - v2.6.0-go Multi-Channel Adapter Breadth Upgrade
+
+- Expanded Go runtime channel adapter surfaces to incorporate broad multi-channel coverage pattern:
+  - added adapters: `whatsapp`, `discord`, `slack`, `feishu`, `qq`, `wework`, `dingtalk`, `infoflow`, `googlechat`, `teams`, `matrix`, `signal`, `line`, `mattermost`, `imessage`.
+- Added reusable channel adapter config model in runtime config:
+  - `enabled`, `token`, `default_target`, `webhook_url`, `auth_header`, `auth_prefix`, `headers`.
+- Implemented generic adapter driver behavior:
+  - disabled-mode rejection,
+  - token-ready delivery mode,
+  - webhook POST delivery mode with auth header/prefix and static header overrides,
+  - status/logout state integration.
+- Preserved Telegram command/auth/model/TTS runtime flow integration while widening channel breadth.
+- Added test coverage:
+  - broad channel status catalog,
+  - webhook delivery and auth header propagation,
+  - token-ready adapter mode,
+  - disabled-channel send rejection,
+  - config validation for enabled adapters without token/webhook.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`
+- Built release artifacts in Docker:
+  - `openclaw-go-windows-amd64.exe`
+  - `openclaw-go-linux-amd64`
+  - `openclaw-go-android-arm64`
+  - `SHA256SUMS.txt`

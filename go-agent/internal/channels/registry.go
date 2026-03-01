@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/config"
 )
 
 type SendRequest struct {
@@ -52,12 +54,37 @@ type Registry struct {
 }
 
 func NewRegistry(telegramBotToken string, telegramDefaultTarget string) *Registry {
+	cfg := config.ChannelsConfig{
+		Telegram: config.TelegramChannelConfig{
+			BotToken:      telegramBotToken,
+			DefaultTarget: telegramDefaultTarget,
+		},
+	}
+	return NewRegistryFromConfig(cfg)
+}
+
+func NewRegistryFromConfig(cfg config.ChannelsConfig) *Registry {
 	r := &Registry{
 		drivers: make(map[string]Driver),
 	}
 	r.register(newWebchatDriver())
 	r.register(newCLIChannelDriver())
-	r.register(newTelegramDriver(telegramBotToken, telegramDefaultTarget))
+	r.register(newTelegramDriver(cfg.Telegram.BotToken, cfg.Telegram.DefaultTarget))
+	r.register(newGenericDriver("whatsapp", []string{"wa", "wapp"}, cfg.WhatsApp))
+	r.register(newGenericDriver("discord", []string{"dc"}, cfg.Discord))
+	r.register(newGenericDriver("slack", []string{"slk"}, cfg.Slack))
+	r.register(newGenericDriver("feishu", []string{"lark"}, cfg.Feishu))
+	r.register(newGenericDriver("qq", []string{"tencent-qq"}, cfg.QQ))
+	r.register(newGenericDriver("wework", []string{"wxwork", "wechatwork"}, cfg.WeWork))
+	r.register(newGenericDriver("dingtalk", []string{"ding", "dt"}, cfg.DingTalk))
+	r.register(newGenericDriver("infoflow", []string{"baidu-infoflow", "ruliu"}, cfg.Infoflow))
+	r.register(newGenericDriver("googlechat", []string{"gchat", "google-chat"}, cfg.GoogleChat))
+	r.register(newGenericDriver("teams", []string{"msteams", "ms-teams", "microsoft-teams"}, cfg.Teams))
+	r.register(newGenericDriver("matrix", []string{"mx"}, cfg.Matrix))
+	r.register(newGenericDriver("signal", []string{"sig"}, cfg.Signal))
+	r.register(newGenericDriver("line", []string{"ln"}, cfg.Line))
+	r.register(newGenericDriver("mattermost", []string{"mm"}, cfg.Mattermost))
+	r.register(newGenericDriver("imessage", []string{"apple-messages"}, cfg.IMessage))
 	return r
 }
 

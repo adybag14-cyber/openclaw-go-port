@@ -2,6 +2,9 @@
 
 Go port runtime for OpenClaw with parity-focused gateway, runtime, bridge, security, and diagnostics surfaces.
 
+Channel adapters include:
+- `telegram`, `whatsapp`, `discord`, `slack`, `feishu`, `qq`, `wework`, `dingtalk`, `infoflow`, `googlechat`, `teams`, `matrix`, `signal`, `line`, `mattermost`, `imessage`, `webchat`, `cli`.
+
 ## Validate with Dockerized Go
 
 ```bash
@@ -20,13 +23,13 @@ docker run --rm -v "$PWD/go-agent:/work" -w /work golang:1.22 sh -lc "export PAT
 Windows PowerShell:
 
 ```powershell
-pwsh ./scripts/build-matrix.ps1 -Version v2.0.0
+pwsh ./scripts/build-matrix.ps1 -Version 2.6.0
 ```
 
 POSIX shell:
 
 ```bash
-sh ./scripts/build-matrix.sh v2.0.0
+sh ./scripts/build-matrix.sh 2.6.0
 ```
 
 Artifacts include:

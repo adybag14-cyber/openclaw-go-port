@@ -82,7 +82,7 @@ func New(cfg config.Config, build buildinfo.Info) *Server {
 				CircuitCooldown:      time.Duration(cfg.Runtime.BrowserBridge.CircuitCooldownMs) * time.Millisecond,
 			},
 		}),
-		channels: channels.NewRegistry(cfg.Channels.Telegram.BotToken, cfg.Channels.Telegram.DefaultTarget),
+		channels: channels.NewRegistryFromConfig(cfg.Channels),
 		memory:   memory.NewStore(cfg.Runtime.StatePath, 10_000),
 		runtime:  agentruntime.New(cfg.Runtime),
 		state:    state.NewStore(),

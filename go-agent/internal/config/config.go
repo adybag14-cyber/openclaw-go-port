@@ -62,12 +62,37 @@ type BrowserBridgeConfig struct {
 }
 
 type ChannelsConfig struct {
-	Telegram TelegramChannelConfig `toml:"telegram"`
+	Telegram   TelegramChannelConfig `toml:"telegram"`
+	WhatsApp   ChannelAdapterConfig  `toml:"whatsapp"`
+	Discord    ChannelAdapterConfig  `toml:"discord"`
+	Slack      ChannelAdapterConfig  `toml:"slack"`
+	Feishu     ChannelAdapterConfig  `toml:"feishu"`
+	QQ         ChannelAdapterConfig  `toml:"qq"`
+	WeWork     ChannelAdapterConfig  `toml:"wework"`
+	DingTalk   ChannelAdapterConfig  `toml:"dingtalk"`
+	Infoflow   ChannelAdapterConfig  `toml:"infoflow"`
+	GoogleChat ChannelAdapterConfig  `toml:"googlechat"`
+	Teams      ChannelAdapterConfig  `toml:"teams"`
+	Matrix     ChannelAdapterConfig  `toml:"matrix"`
+	Signal     ChannelAdapterConfig  `toml:"signal"`
+	Line       ChannelAdapterConfig  `toml:"line"`
+	Mattermost ChannelAdapterConfig  `toml:"mattermost"`
+	IMessage   ChannelAdapterConfig  `toml:"imessage"`
 }
 
 type TelegramChannelConfig struct {
 	BotToken      string `toml:"bot_token"`
 	DefaultTarget string `toml:"default_target"`
+}
+
+type ChannelAdapterConfig struct {
+	Enabled       bool              `toml:"enabled"`
+	Token         string            `toml:"token"`
+	DefaultTarget string            `toml:"default_target"`
+	WebhookURL    string            `toml:"webhook_url"`
+	AuthHeader    string            `toml:"auth_header"`
+	AuthPrefix    string            `toml:"auth_prefix"`
+	Headers       map[string]string `toml:"headers"`
 }
 
 type SecurityConfig struct {
@@ -121,6 +146,21 @@ func Default() Config {
 				BotToken:      "",
 				DefaultTarget: "",
 			},
+			WhatsApp:   defaultChannelAdapterConfig(),
+			Discord:    defaultChannelAdapterConfig(),
+			Slack:      defaultChannelAdapterConfig(),
+			Feishu:     defaultChannelAdapterConfig(),
+			QQ:         defaultChannelAdapterConfig(),
+			WeWork:     defaultChannelAdapterConfig(),
+			DingTalk:   defaultChannelAdapterConfig(),
+			Infoflow:   defaultChannelAdapterConfig(),
+			GoogleChat: defaultChannelAdapterConfig(),
+			Teams:      defaultChannelAdapterConfig(),
+			Matrix:     defaultChannelAdapterConfig(),
+			Signal:     defaultChannelAdapterConfig(),
+			Line:       defaultChannelAdapterConfig(),
+			Mattermost: defaultChannelAdapterConfig(),
+			IMessage:   defaultChannelAdapterConfig(),
 		},
 		Security: SecurityConfig{
 			PolicyBundlePath: "memory://security-policy.json",
@@ -246,6 +286,18 @@ func setIntIfPresent(env string, dest *int) {
 	}
 }
 
+func defaultChannelAdapterConfig() ChannelAdapterConfig {
+	return ChannelAdapterConfig{
+		Enabled:       false,
+		Token:         "",
+		DefaultTarget: "",
+		WebhookURL:    "",
+		AuthHeader:    "Authorization",
+		AuthPrefix:    "Bearer",
+		Headers:       map[string]string{},
+	}
+}
+
 func validate(cfg Config) error {
 	if strings.TrimSpace(cfg.Gateway.URL) == "" {
 		return errors.New("gateway.url cannot be empty")
@@ -332,6 +384,31 @@ func validate(cfg Config) error {
 	}
 	if cfg.Security.RiskBlockThreshold < cfg.Security.RiskReviewThreshold {
 		return errors.New("security.risk_block_threshold must be >= security.risk_review_threshold")
+	}
+	channelAdapters := map[string]ChannelAdapterConfig{
+		"whatsapp":   cfg.Channels.WhatsApp,
+		"discord":    cfg.Channels.Discord,
+		"slack":      cfg.Channels.Slack,
+		"feishu":     cfg.Channels.Feishu,
+		"qq":         cfg.Channels.QQ,
+		"wework":     cfg.Channels.WeWork,
+		"dingtalk":   cfg.Channels.DingTalk,
+		"infoflow":   cfg.Channels.Infoflow,
+		"googlechat": cfg.Channels.GoogleChat,
+		"teams":      cfg.Channels.Teams,
+		"matrix":     cfg.Channels.Matrix,
+		"signal":     cfg.Channels.Signal,
+		"line":       cfg.Channels.Line,
+		"mattermost": cfg.Channels.Mattermost,
+		"imessage":   cfg.Channels.IMessage,
+	}
+	for name, adapter := range channelAdapters {
+		if !adapter.Enabled {
+			continue
+		}
+		if strings.TrimSpace(adapter.Token) == "" && strings.TrimSpace(adapter.WebhookURL) == "" {
+			return errors.New("channels." + name + " requires token or webhook_url when enabled")
+		}
 	}
 	return nil
 }
