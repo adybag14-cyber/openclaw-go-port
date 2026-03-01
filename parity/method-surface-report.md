@@ -9,9 +9,9 @@ Generated (UTC): deterministic
 
 ## Surface: base
 
-- Upstream method count: 92
+- Upstream method count: 91
 - Rust method count: 133
-- Shared methods: 92
+- Shared methods: 91
 - Coverage vs upstream: 100%
 
 ### Missing In Rust
@@ -52,6 +52,7 @@ Generated (UTC): deterministic
 - `edge.wasm.marketplace.list`
 - `poll`
 - `push.test`
+- `secrets.reload`
 - `session.status`
 - `sessions.history`
 - `sessions.resolve`
@@ -64,9 +65,9 @@ Generated (UTC): deterministic
 
 ## Surface: handlers
 
-- Upstream method count: 102
+- Upstream method count: 101
 - Rust method count: 133
-- Shared methods: 102
+- Shared methods: 101
 - Coverage vs upstream: 100%
 
 ### Missing In Rust
@@ -103,6 +104,7 @@ Generated (UTC): deterministic
 - `edge.swarm.plan`
 - `edge.voice.transcribe`
 - `edge.wasm.marketplace.list`
+- `secrets.reload`
 - `session.status`
 - `sessions.history`
 - `sessions.send`

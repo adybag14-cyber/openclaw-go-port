@@ -5,6 +5,42 @@
 ### Highlights
 - No unreleased changes.
 
+## v2.5.0-go - 2026-03-01
+
+### Highlights
+- Shipped full Go parity closure release with refreshed CP0-CP9 gate artifacts.
+- Re-validated exact Rust/Go RPC contract parity:
+  - Rust supported methods: `133`
+  - Go supported methods: `133`
+  - Missing in Go: `0`
+  - Extra in Go: `0`
+- Refreshed parity scoreboard to full completion state:
+  - Implemented modules: `22`
+  - Partial: `0`
+  - Deferred: `0`
+  - Not started: `0`
+  - Base coverage: `100%`
+  - Handler coverage: `100%`
+- Published cross-platform Go binaries:
+  - Windows `amd64`
+  - Linux `amd64`
+  - Android `arm64`
+
+### Validation
+- CP gate suite:
+  - `parity/run-cp0-gate.ps1`
+  - `parity/run-cp1-gate.ps1`
+  - `parity/run-cp2-gate.ps1`
+  - `parity/run-cp3-gate.ps1`
+  - `parity/run-cp4-gate.ps1`
+  - `parity/run-cp5-gate.ps1`
+  - `parity/run-cp6-gate.ps1`
+  - `parity/run-cp7-gate.ps1`
+  - `parity/run-cp8-gate.ps1`
+  - `parity/run-cp9-gate.ps1`
+- Dockerized release build:
+  - `go-agent/scripts/build-matrix.sh 2.5.0 ../dist/release-v2.5.0-go-assets`
+
 ## v1.0.1-go - 2026-02-28
 
 ### Highlights

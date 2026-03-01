@@ -906,3 +906,23 @@
   - `/usr/local/go/bin/gofmt -w ...`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation - v2.5.0-go Parity Closure + Release Cut
+
+- Re-ran full parity validation gate sequence (`CP0` through `CP9`) and refreshed generated parity artifacts:
+  - `parity/generated/method-surface-diff.json`
+  - `parity/generated/parity-scoreboard.json`
+  - `parity/generated/parity-scoreboard.md`
+  - `parity/method-surface-report.md`
+  - `parity/generated/cp*/...` summaries, metrics, and logs
+- Confirmed deterministic parity closure:
+  - Rust RPC methods: `133`
+  - Go RPC methods: `133`
+  - Missing in Go: `0`
+  - Extra in Go: `0`
+  - Scoreboard: `22/22` implemented, `0` partial/deferred/not started
+- Built cross-platform release artifacts in Docker (`go1.25.7`) via build matrix:
+  - `openclaw-go-windows-amd64.exe`
+  - `openclaw-go-linux-amd64`
+  - `openclaw-go-android-arm64`
+  - `SHA256SUMS.txt`

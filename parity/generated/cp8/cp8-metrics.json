@@ -1,27 +1,30 @@
-{
-  "gate": "cp8",
-  "passed": 15,
-  "totalFixtures": 15,
-  "totalDurationMs": 79313,
-  "avgFixtureDurationMs": 5288,
-  "reliabilityFixtureCount": 10,
-  "securityFixtureCount": 4,
-  "benchmarkFixtureCount": 1,
-  "benchmarkMetrics": {
-    "elapsedMs": 34,
-    "fixture": "gateway::tests::dispatcher_status_benchmark_emits_latency_profile",
-    "iterations": 512,
-    "latencyUs": {
-      "max": 892,
-      "min": 34,
-      "p50": 38,
-      "p95": 91,
-      "p99": 161
-    },
-    "rssKiB": null,
-    "throughputOpsPerSec": 14720.850129094955
-  },
-  "cutoverRunbookPath": "parity/CP8_CUTOVER_RUNBOOK.md",
-  "cutoverRunbookValidated": true,
-  "resultsTsv": "cp8-fixture-results.tsv"
+﻿{
+    "gate":  "cp8",
+    "passed":  15,
+    "totalFixtures":  15,
+    "totalDurationMs":  127016,
+    "avgFixtureDurationMs":  8468,
+    "reliabilityFixtureCount":  10,
+    "securityFixtureCount":  4,
+    "benchmarkFixtureCount":  1,
+    "benchmarkMetrics":  {
+                             "elapsedMs":  2085,
+                             "fixture":  "gateway::tests::dispatcher_status_benchmark_emits_latency_profile",
+                             "iterations":  512,
+                             "latencyUs":  {
+                                               "max":  8860,
+                                               "min":  3090,
+                                               "p50":  3800,
+                                               "p95":  5473,
+                                               "p99":  6224
+                                           },
+                             "limits":  {
+                                            "p99Us":  300000
+                                        },
+                             "rssKiB":  null,
+                             "throughputOpsPerSec":  245.49566990230278
+                         },
+    "cutoverRunbookPath":  "parity/CP8_CUTOVER_RUNBOOK.md",
+    "cutoverRunbookValidated":  true,
+    "resultsTsv":  "cp8-fixture-results.tsv"
 }

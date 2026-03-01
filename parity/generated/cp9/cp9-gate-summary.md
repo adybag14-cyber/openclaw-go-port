@@ -1,9 +1,9 @@
-## CP9 Docker End-to-End Parity Gate
+﻿## CP9 Docker End-to-End Parity Gate
 
 - Checks passed: 4/4
 - Checks failed: 0
-- Total duration: 248929 ms
-- Avg check duration: 62232 ms
+- Total duration: 57142 ms
+- Avg check duration: 14286 ms
 - Docker server version: 29.2.0
 - Docker compose version: 5.0.2
 - Artifact log: cp9-gate.log
