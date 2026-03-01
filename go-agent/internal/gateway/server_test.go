@@ -1617,6 +1617,11 @@ func TestEdgeValidationRejectsMissingRequiredInputs(t *testing.T) {
 			params:      map[string]any{},
 			wantMessage: "requires audioPath or hintText",
 		},
+		{
+			method:      "edge.enclave.prove",
+			params:      map[string]any{},
+			wantMessage: "requires statement",
+		},
 	}
 
 	for idx, tc := range cases {
@@ -1834,6 +1839,99 @@ func TestEdgeFinetuneRunExecutesTrainerWhenConfigured(t *testing.T) {
 	}
 	if _, err := os.Stat(manifestPath); err != nil {
 		t.Fatalf("expected manifest file to exist: %v", err)
+	}
+}
+
+func TestEdgeFinetuneRunReportsExecutionFailure(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "trainer-fail.sh")
+	script := "#!/bin/sh\n" +
+		"echo \"trainer failed\" 1>&2\n" +
+		"exit 3\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write trainer fail mock: %v", err)
+	}
+	if err := os.Chmod(bin, 0o755); err != nil {
+		t.Fatalf("chmod trainer fail mock: %v", err)
+	}
+	t.Setenv("OPENCLAW_GO_LORA_TRAINER_BIN", bin)
+	t.Setenv("OPENCLAW_GO_LORA_TRAINER_TIMEOUT_MS", "15000")
+
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-edge-finetune-fail"
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	frame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-finetune-fail",
+		"method": "edge.finetune.run",
+		"params": map[string]any{
+			"dryRun":           false,
+			"autoIngestMemory": true,
+			"outputPath":       filepath.Join(t.TempDir(), "adapter-fail"),
+		},
+	})
+	result := assertRPCResult(t, frame)
+	if ok, _ := result["ok"].(bool); ok {
+		t.Fatalf("expected finetune run ok=false for failing trainer")
+	}
+	execution, _ := result["execution"].(map[string]any)
+	if status, _ := execution["status"].(string); status != "failed" {
+		t.Fatalf("expected execution.status=failed, got %v", execution["status"])
+	}
+	job, _ := result["job"].(map[string]any)
+	if status, _ := job["status"].(string); status != "failed" {
+		t.Fatalf("expected job status failed, got %v", job["status"])
+	}
+}
+
+func TestEdgeFinetuneRunReportsExecutionTimeout(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "trainer-timeout.sh")
+	script := "#!/bin/sh\n" +
+		"sleep 6\n" +
+		"echo \"done\"\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write trainer timeout mock: %v", err)
+	}
+	if err := os.Chmod(bin, 0o755); err != nil {
+		t.Fatalf("chmod trainer timeout mock: %v", err)
+	}
+	t.Setenv("OPENCLAW_GO_LORA_TRAINER_BIN", bin)
+	t.Setenv("OPENCLAW_GO_LORA_TRAINER_TIMEOUT_MS", "5000")
+
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-edge-finetune-timeout"
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	frame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-finetune-timeout",
+		"method": "edge.finetune.run",
+		"params": map[string]any{
+			"dryRun":           false,
+			"autoIngestMemory": true,
+			"outputPath":       filepath.Join(t.TempDir(), "adapter-timeout"),
+		},
+	})
+	result := assertRPCResult(t, frame)
+	if ok, _ := result["ok"].(bool); ok {
+		t.Fatalf("expected finetune run ok=false for timeout trainer")
+	}
+	execution, _ := result["execution"].(map[string]any)
+	if timedOut, _ := execution["timedOut"].(bool); !timedOut {
+		t.Fatalf("expected execution.timedOut=true")
+	}
+	if status, _ := execution["status"].(string); status != "timeout" {
+		t.Fatalf("expected execution.status=timeout, got %v", execution["status"])
+	}
+	job, _ := result["job"].(map[string]any)
+	if status, _ := job["status"].(string); status != "timeout" {
+		t.Fatalf("expected job status timeout, got %v", job["status"])
 	}
 }
 

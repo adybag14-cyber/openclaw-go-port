@@ -656,3 +656,21 @@
   - `/usr/local/go/bin/gofmt -w ...`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation (Issue #7) - Slice 3: Enclave + Finetune Execution Parity Polish
+
+- Enclave proof contract hardening:
+  - `edge.enclave.prove` now returns `-32602` when statement/challenge input is missing (Rust-parity requirement).
+  - `edge.enclave.status` now includes deeper runtime/attestation metadata surfaces (`runtime`, `attestationInfo`) while preserving existing compatibility fields.
+- Finetune execution depth polishing:
+  - execution payload now includes explicit `status` (`completed|failed|timeout`).
+  - job payload now includes `statusReason`.
+  - added integration coverage for non-dry-run failure and timeout flows.
+- Added/expanded integration tests:
+  - `TestEdgeValidationRejectsMissingRequiredInputs` now covers missing `edge.enclave.prove` statement.
+  - `TestEdgeFinetuneRunReportsExecutionFailure`
+  - `TestEdgeFinetuneRunReportsExecutionTimeout`
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`

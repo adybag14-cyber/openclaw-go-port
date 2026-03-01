@@ -377,7 +377,7 @@ func (s *Server) dispatchRPC(ctx context.Context, requestID string, canonical st
 	case "edge.enclave.status":
 		return s.handleEdgeEnclaveStatus(), nil
 	case "edge.enclave.prove":
-		return s.handleEdgeEnclaveProve(params), nil
+		return s.handleEdgeEnclaveProve(params)
 	case "edge.mesh.status":
 		return s.handleEdgeMeshStatus(), nil
 	case "edge.homomorphic.compute":
@@ -1129,9 +1129,19 @@ func (s *Server) handleEdgeEnclaveStatus() map[string]any {
 		"tpm": true,
 		"sev": envTruthy("OPENCLAW_GO_ENCLAVE_SEV"),
 	}
+	status["runtime"] = map[string]any{
+		"activeMode":     status["activeMode"],
+		"availableModes": status["availableModes"],
+		"profile":        runtimeProfileName(s.cfg.Runtime.Profile),
+	}
 	status["attestationDetail"] = map[string]any{
 		"configured": true,
 		"binary":     strings.TrimSpace(os.Getenv("OPENCLAW_GO_ENCLAVE_ATTEST_BIN")),
+		"lastProof":  lastProofRecord,
+	}
+	status["attestationInfo"] = map[string]any{
+		"configured": strings.TrimSpace(edgeEnclaveAttestationBinaryPath()) != "",
+		"binary":     valueOrNil(edgeEnclaveAttestationBinaryPath()),
 		"lastProof":  lastProofRecord,
 	}
 	status["zeroKnowledge"] = map[string]any{
@@ -1142,10 +1152,13 @@ func (s *Server) handleEdgeEnclaveStatus() map[string]any {
 	return status
 }
 
-func (s *Server) handleEdgeEnclaveProve(params map[string]any) map[string]any {
+func (s *Server) handleEdgeEnclaveProve(params map[string]any) (map[string]any, *dispatchError) {
 	statement := normalizeOptionalText(firstNonEmptyValue(params, "statement", "challenge"), 16_000)
 	if statement == "" {
-		statement = "default-challenge"
+		return nil, &dispatchError{
+			Code:    -32602,
+			Message: "edge.enclave.prove requires statement",
+		}
 	}
 	nonce := normalizeOptionalText(firstNonEmptyValue(params, "nonce"), 512)
 	if nonce == "" {
@@ -1182,7 +1195,7 @@ func (s *Server) handleEdgeEnclaveProve(params map[string]any) map[string]any {
 		},
 		"record":   record,
 		"issuedAt": proof["issuedAt"],
-	}
+	}, nil
 }
 
 func (s *Server) handleEdgeMeshStatus() map[string]any {
@@ -1586,6 +1599,7 @@ func (s *Server) handleEdgeFinetuneRun(ctx context.Context, params map[string]an
 		"attempted": false,
 		"success":   true,
 		"timedOut":  false,
+		"status":    "completed",
 		"timeoutMs": timeoutMs,
 		"binary":    valueOrNil(trainerBinary),
 		"argv":      commandArgs,
@@ -1616,8 +1630,10 @@ func (s *Server) handleEdgeFinetuneRun(ctx context.Context, params map[string]an
 		}
 		if timedOut {
 			jobStatus = "timeout"
+			execution["status"] = "timeout"
 		} else if !success {
 			jobStatus = "failed"
+			execution["status"] = "failed"
 		}
 	}
 
@@ -1634,6 +1650,7 @@ func (s *Server) handleEdgeFinetuneRun(ctx context.Context, params map[string]an
 	job["execution"] = cloneMap(execution)
 	job["manifestPath"] = manifestPath
 	job["status"] = jobStatus
+	job["statusReason"] = valueOrDefault(toString(execution["status"], ""), jobStatus)
 
 	return map[string]any{
 		"ok":             toBool(execution["success"], false),
