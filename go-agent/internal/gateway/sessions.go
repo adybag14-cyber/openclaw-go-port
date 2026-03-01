@@ -104,3 +104,13 @@ func (r *SessionRegistry) Count() int {
 	r.mu.RUnlock()
 	return count
 }
+
+func (r *SessionRegistry) Delete(id string) bool {
+	r.mu.Lock()
+	_, ok := r.sessions[id]
+	if ok {
+		delete(r.sessions, id)
+	}
+	r.mu.Unlock()
+	return ok
+}

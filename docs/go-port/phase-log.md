@@ -674,3 +674,23 @@
   - `/usr/local/go/bin/gofmt -w ...`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation (Issue #8) - Slice 1: Session Lifecycle Runtime Parity Depth
+
+- Replaced synthetic compat behavior for session lifecycle methods with runtime mutations:
+  - `sessions.delete` now removes session registry entries, state entries, and session memory history (and preserves tombstone semantics).
+  - `sessions.reset` now clears session tombstones and purges session-scoped state/history.
+  - `sessions.compact` now executes real memory trimming through store compaction APIs.
+- Added underlying runtime data-plane support:
+  - memory store: `Trim(limit)` and `RemoveSession(sessionID)` with persistence-safe snapshots.
+  - state store: `Delete(sessionID)` lifecycle operation.
+  - session registry: `Delete(sessionID)` lifecycle operation.
+- Expanded tests:
+  - memory/store tests for trim/remove persistence.
+  - state store delete lifecycle test.
+  - gateway session registry delete test.
+  - integration tests for `sessions.delete`, `sessions.reset`, and `sessions.compact` end-to-end behavior.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`

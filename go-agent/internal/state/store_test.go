@@ -21,3 +21,18 @@ func TestTouchAndGet(t *testing.T) {
 		t.Fatalf("unexpected last method: %s", state.LastMethod)
 	}
 }
+
+func TestDelete(t *testing.T) {
+	store := NewStore()
+	store.TouchMessage("sess-1", "webchat", "chat.send", "hello")
+
+	if ok := store.Delete("sess-1"); !ok {
+		t.Fatalf("expected delete to return true")
+	}
+	if _, ok := store.Get("sess-1"); ok {
+		t.Fatalf("expected sess-1 to be deleted")
+	}
+	if ok := store.Delete("sess-1"); ok {
+		t.Fatalf("expected second delete to return false")
+	}
+}

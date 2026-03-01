@@ -247,6 +247,63 @@ func (s *Store) Count() int {
 	return len(s.entries)
 }
 
+func (s *Store) Trim(limit int) int {
+	if limit < 0 {
+		limit = 0
+	}
+
+	removed := 0
+	s.mu.Lock()
+	switch {
+	case limit == 0 && len(s.entries) > 0:
+		removed = len(s.entries)
+		s.entries = []MessageEntry{}
+	case limit > 0 && len(s.entries) > limit:
+		removed = len(s.entries) - limit
+		start := len(s.entries) - limit
+		s.entries = append([]MessageEntry(nil), s.entries[start:]...)
+	}
+	if removed > 0 {
+		s.rebuildIndexesLocked()
+	}
+	s.mu.Unlock()
+
+	if removed > 0 {
+		s.persistLockedSnapshot()
+	}
+	return removed
+}
+
+func (s *Store) RemoveSession(sessionID string) int {
+	sid := strings.TrimSpace(sessionID)
+	if sid == "" {
+		return 0
+	}
+
+	removed := 0
+	s.mu.Lock()
+	if len(s.entries) > 0 {
+		kept := make([]MessageEntry, 0, len(s.entries))
+		for _, entry := range s.entries {
+			if strings.TrimSpace(entry.SessionID) == sid {
+				removed++
+				continue
+			}
+			kept = append(kept, entry)
+		}
+		if removed > 0 {
+			s.entries = append([]MessageEntry(nil), kept...)
+			s.rebuildIndexesLocked()
+		}
+	}
+	s.mu.Unlock()
+
+	if removed > 0 {
+		s.persistLockedSnapshot()
+	}
+	return removed
+}
+
 func (s *Store) load() {
 	if !s.persist {
 		return

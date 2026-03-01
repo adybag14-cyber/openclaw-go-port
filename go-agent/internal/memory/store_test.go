@@ -98,3 +98,36 @@ func TestStoreStatsAndPersistenceRecovery(t *testing.T) {
 		}
 	}
 }
+
+func TestStoreTrimAndRemoveSession(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "memory.json")
+	store := NewStore(path, 100)
+	store.Append(MessageEntry{SessionID: "s1", Channel: "webchat", Method: "chat.send", Role: "user", Text: "one"})
+	store.Append(MessageEntry{SessionID: "s2", Channel: "webchat", Method: "chat.send", Role: "assistant", Text: "two"})
+	store.Append(MessageEntry{SessionID: "s1", Channel: "telegram", Method: "send", Role: "assistant", Text: "three"})
+	store.Append(MessageEntry{SessionID: "s3", Channel: "webchat", Method: "chat.send", Role: "user", Text: "four"})
+
+	removedSession := store.RemoveSession("s1")
+	if removedSession != 2 {
+		t.Fatalf("expected RemoveSession to remove 2 entries, got %d", removedSession)
+	}
+	if got := len(store.HistoryBySession("s1", 10)); got != 0 {
+		t.Fatalf("expected s1 history removed, got %d", got)
+	}
+
+	removedTrim := store.Trim(1)
+	if removedTrim != 1 {
+		t.Fatalf("expected Trim to remove 1 entry, got %d", removedTrim)
+	}
+	if got := store.Count(); got != 1 {
+		t.Fatalf("expected remaining count=1 after trim, got %d", got)
+	}
+
+	loaded := NewStore(path, 100)
+	if got := loaded.Count(); got != 1 {
+		t.Fatalf("expected persisted count=1 after trim/remove, got %d", got)
+	}
+	if got := len(loaded.HistoryBySession("s1", 10)); got != 0 {
+		t.Fatalf("expected persisted removal of s1 entries, got %d", got)
+	}
+}

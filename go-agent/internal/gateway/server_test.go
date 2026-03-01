@@ -2285,6 +2285,231 @@ func TestAllSupportedMethodsDispatchWithoutNotImplemented(t *testing.T) {
 	}
 }
 
+func TestCompatSessionsDeleteRemovesSessionStateAndHistory(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-compat-sessions-delete"
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	connect := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "sess-del-connect",
+		"method": "connect",
+		"params": map[string]any{
+			"role":    "client",
+			"channel": "webchat",
+			"client":  map[string]any{"id": "session-delete-client"},
+		},
+	})
+	connectResult := assertRPCResult(t, connect)
+	sessionID, _ := connectResult["sessionId"].(string)
+	if sessionID == "" {
+		t.Fatalf("expected sessionId from connect")
+	}
+
+	for idx := 0; idx < 3; idx++ {
+		_ = rpcCall(t, ts.URL, map[string]any{
+			"type":   "req",
+			"id":     fmt.Sprintf("sess-del-inject-%d", idx),
+			"method": "chat.inject",
+			"params": map[string]any{
+				"sessionId": sessionID,
+				"channel":   "webchat",
+				"role":      "user",
+				"text":      fmt.Sprintf("delete-flow-message-%d", idx),
+			},
+		})
+	}
+
+	usageBefore := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "sess-del-usage-before",
+		"method": "sessions.usage",
+		"params": map[string]any{"sessionId": sessionID},
+	})
+	usageBeforeResult := assertRPCResult(t, usageBefore)
+	if messages := int(toFloat64(usageBeforeResult["messages"])); messages < 3 {
+		t.Fatalf("expected usage before delete >=3 messages, got %v", usageBeforeResult["messages"])
+	}
+
+	deleteFrame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "sess-del-delete",
+		"method": "sessions.delete",
+		"params": map[string]any{"sessionId": sessionID},
+	})
+	deleteResult := assertRPCResult(t, deleteFrame)
+	if ok, _ := deleteResult["ok"].(bool); !ok {
+		t.Fatalf("expected sessions.delete ok=true, got %v", deleteResult["ok"])
+	}
+	if removedSession, _ := deleteResult["removedSession"].(bool); !removedSession {
+		t.Fatalf("expected removedSession=true, got %v", deleteResult["removedSession"])
+	}
+	if removedMessages := int(toFloat64(deleteResult["removedMessages"])); removedMessages < 3 {
+		t.Fatalf("expected removedMessages>=3, got %v", deleteResult["removedMessages"])
+	}
+
+	resolveAfterDelete := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "sess-del-resolve",
+		"method": "sessions.resolve",
+		"params": map[string]any{"sessionId": sessionID},
+	})
+	assertRPCErrorCode(t, resolveAfterDelete, -32004)
+
+	usageAfter := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "sess-del-usage-after",
+		"method": "sessions.usage",
+		"params": map[string]any{"sessionId": sessionID},
+	})
+	usageAfterResult := assertRPCResult(t, usageAfter)
+	if messages := int(toFloat64(usageAfterResult["messages"])); messages != 0 {
+		t.Fatalf("expected usage after delete to be 0 messages, got %v", usageAfterResult["messages"])
+	}
+
+	preview := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "sess-del-preview",
+		"method": "sessions.preview",
+		"params": map[string]any{"limit": 100},
+	})
+	previewResult := assertRPCResult(t, preview)
+	items, _ := previewResult["items"].([]any)
+	for _, raw := range items {
+		entry, _ := raw.(map[string]any)
+		if toString(entry["sessionId"], "") == sessionID {
+			t.Fatalf("expected deleted session to be absent from preview")
+		}
+	}
+}
+
+func TestCompatSessionsResetAndCompactMutateMemory(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-compat-sessions-reset-compact"
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	connect := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "sess-reset-connect",
+		"method": "connect",
+		"params": map[string]any{
+			"role":    "client",
+			"channel": "webchat",
+			"client":  map[string]any{"id": "session-reset-client"},
+		},
+	})
+	connectResult := assertRPCResult(t, connect)
+	sessionID, _ := connectResult["sessionId"].(string)
+	if sessionID == "" {
+		t.Fatalf("expected sessionId from connect")
+	}
+
+	for idx := 0; idx < 6; idx++ {
+		_ = rpcCall(t, ts.URL, map[string]any{
+			"type":   "req",
+			"id":     fmt.Sprintf("sess-reset-inject-%d", idx),
+			"method": "chat.inject",
+			"params": map[string]any{
+				"sessionId": sessionID,
+				"channel":   "webchat",
+				"role":      "assistant",
+				"text":      fmt.Sprintf("reset-flow-message-%d", idx),
+			},
+		})
+	}
+
+	reset := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "sess-reset-call",
+		"method": "sessions.reset",
+		"params": map[string]any{"sessionId": sessionID},
+	})
+	resetResult := assertRPCResult(t, reset)
+	if ok, _ := resetResult["ok"].(bool); !ok {
+		t.Fatalf("expected sessions.reset ok=true, got %v", resetResult["ok"])
+	}
+	if removedMessages := int(toFloat64(resetResult["removedMessages"])); removedMessages < 6 {
+		t.Fatalf("expected sessions.reset removedMessages>=6, got %v", resetResult["removedMessages"])
+	}
+	if clearedState, _ := resetResult["clearedState"].(bool); !clearedState {
+		t.Fatalf("expected sessions.reset clearedState=true, got %v", resetResult["clearedState"])
+	}
+
+	resolveAfterReset := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "sess-reset-resolve",
+		"method": "sessions.resolve",
+		"params": map[string]any{"sessionId": sessionID},
+	})
+	resolveResult := assertRPCResult(t, resolveAfterReset)
+	if stateFound, _ := resolveResult["stateFound"].(bool); stateFound {
+		t.Fatalf("expected stateFound=false after sessions.reset")
+	}
+
+	for idx := 0; idx < 5; idx++ {
+		_ = rpcCall(t, ts.URL, map[string]any{
+			"type":   "req",
+			"id":     fmt.Sprintf("sess-compact-inject-%d", idx),
+			"method": "chat.inject",
+			"params": map[string]any{
+				"sessionId": sessionID,
+				"channel":   "webchat",
+				"role":      "assistant",
+				"text":      fmt.Sprintf("compact-flow-message-%d", idx),
+			},
+		})
+	}
+
+	compact := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "sess-compact-call",
+		"method": "sessions.compact",
+		"params": map[string]any{"limit": 2},
+	})
+	compactResult := assertRPCResult(t, compact)
+	if before := int(toFloat64(compactResult["before"])); before < 5 {
+		t.Fatalf("expected compact before >=5, got %v", compactResult["before"])
+	}
+	if after := int(toFloat64(compactResult["after"])); after != 2 {
+		t.Fatalf("expected compact after=2, got %v", compactResult["after"])
+	}
+	if compacted := int(toFloat64(compactResult["compacted"])); compacted < 3 {
+		t.Fatalf("expected compacted>=3, got %v", compactResult["compacted"])
+	}
+
+	logs := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "sess-compact-logs",
+		"method": "logs.tail",
+		"params": map[string]any{"limit": 10},
+	})
+	logResult := assertRPCResult(t, logs)
+	if count := int(toFloat64(logResult["count"])); count != 2 {
+		t.Fatalf("expected logs.tail count=2 after compact, got %v", logResult["count"])
+	}
+}
+
+func toFloat64(v any) float64 {
+	switch value := v.(type) {
+	case float64:
+		return value
+	case int:
+		return float64(value)
+	case int64:
+		return float64(value)
+	default:
+		return 0
+	}
+}
+
 func rpcCall(t *testing.T, baseURL string, frame map[string]any) map[string]any {
 	t.Helper()
 	body, err := json.Marshal(frame)

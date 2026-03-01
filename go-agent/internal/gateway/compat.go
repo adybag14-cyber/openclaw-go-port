@@ -2111,10 +2111,15 @@ func (s *Server) handleCompatSessionsResolve(params map[string]any) (map[string]
 	if !ok || s.compat.isSessionDeleted(sessionID) {
 		return nil, &dispatchError{Code: -32004, Message: "session not found", Details: map[string]any{"sessionId": sessionID}}
 	}
-	state, _ := s.state.Get(sessionID)
+	state, ok := s.state.Get(sessionID)
+	resolvedState := any(nil)
+	if ok {
+		resolvedState = state
+	}
 	return map[string]any{
-		"session": session,
-		"state":   state,
+		"session":    session,
+		"state":      resolvedState,
+		"stateFound": ok,
 	}, nil
 }
 
@@ -2123,11 +2128,15 @@ func (s *Server) handleCompatSessionsReset(params map[string]any) map[string]any
 	if sessionID == "" {
 		return map[string]any{"ok": false, "reason": "missing sessionId"}
 	}
+	removedMessages := s.memory.RemoveSession(sessionID)
+	clearedState := s.state.Delete(sessionID)
 	s.compat.clearSessionTombstone(sessionID)
 	return map[string]any{
-		"ok":        true,
-		"sessionId": sessionID,
-		"resetAt":   time.Now().UTC().Format(time.RFC3339),
+		"ok":              true,
+		"sessionId":       sessionID,
+		"removedMessages": removedMessages,
+		"clearedState":    clearedState,
+		"resetAt":         time.Now().UTC().Format(time.RFC3339),
 	}
 }
 
@@ -2136,24 +2145,32 @@ func (s *Server) handleCompatSessionsDelete(params map[string]any) map[string]an
 	if sessionID == "" {
 		return map[string]any{"ok": false, "reason": "missing sessionId"}
 	}
+	removedMessages := s.memory.RemoveSession(sessionID)
+	removedState := s.state.Delete(sessionID)
+	removedSession := s.sessions.Delete(sessionID)
 	s.compat.markSessionDeleted(sessionID)
 	return map[string]any{
-		"ok":        true,
-		"sessionId": sessionID,
+		"ok":              true,
+		"sessionId":       sessionID,
+		"removedMessages": removedMessages,
+		"removedState":    removedState,
+		"removedSession":  removedSession,
+		"deletedAt":       time.Now().UTC().Format(time.RFC3339),
 	}
 }
 
 func (s *Server) handleCompatSessionsCompact(params map[string]any) map[string]any {
 	limit := toInt(params["limit"], 1000)
-	count := s.memory.Count()
-	compacted := 0
-	if count > limit && limit > 0 {
-		compacted = count - limit
-	}
+	before := s.memory.Count()
+	compacted := s.memory.Trim(limit)
+	after := s.memory.Count()
 	return map[string]any{
 		"ok":        true,
+		"limit":     limit,
+		"before":    before,
+		"after":     after,
+		"count":     after,
 		"compacted": compacted,
-		"count":     count,
 	}
 }
 

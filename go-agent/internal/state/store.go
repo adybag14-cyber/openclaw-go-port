@@ -61,3 +61,17 @@ func (s *Store) List() []SessionState {
 	s.mu.RUnlock()
 	return out
 }
+
+func (s *Store) Delete(sessionID string) bool {
+	sid := strings.TrimSpace(sessionID)
+	if sid == "" {
+		return false
+	}
+	s.mu.Lock()
+	_, ok := s.sessions[sid]
+	if ok {
+		delete(s.sessions, sid)
+	}
+	s.mu.Unlock()
+	return ok
+}
