@@ -555,6 +555,9 @@
   - `kimi -> https://kimi.com/`
   - `qwen -> https://chat.qwen.ai/`
   - plus login manager test coverage for provider verification URL outputs.
+- Added richer `/auth bridge` diagnostics metadata:
+  - bridge payload now includes web-login session summary (`total`, status counters, `byProvider` buckets).
+  - gateway integration assertion updated to verify diagnostics summary is present.
 - Added integration test coverage for provider/account auth flow:
   - provider-scoped start/status/wait/complete/cancel path with callback URL code extraction.
 - Validation completed (Dockerized Go toolchain):

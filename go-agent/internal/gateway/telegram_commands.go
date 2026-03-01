@@ -597,6 +597,7 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 		}), nil
 	case "bridge":
 		bridgeStatus := probeBrowserBridge(s.cfg.Runtime.BrowserBridge.Enabled, s.cfg.Runtime.BrowserBridge.Endpoint, 2*time.Second)
+		bridgeStatus["sessions"] = s.webLogin.Summary()
 		message := fmt.Sprintf("Bridge `%s` (%s).", toString(bridgeStatus["status"], "unknown"), toString(bridgeStatus["endpoint"], ""))
 		if probeErr := toString(bridgeStatus["error"], ""); probeErr != "" {
 			message += fmt.Sprintf("\nProbe error: %s", probeErr)

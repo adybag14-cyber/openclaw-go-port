@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -222,6 +223,68 @@ func (m *Manager) IsAuthorized(id string) bool {
 		return false
 	}
 	return session.Status == LoginAuthorized
+}
+
+func (m *Manager) List() []Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]Session, 0, len(m.sessions))
+	for _, state := range m.sessions {
+		out = append(out, m.applyExpiry(state.session))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt < out[j].CreatedAt
+	})
+	return out
+}
+
+func (m *Manager) Summary() map[string]any {
+	sessions := m.List()
+	byProvider := map[string]map[string]int{}
+	pending := 0
+	authorized := 0
+	expired := 0
+	rejected := 0
+	for _, session := range sessions {
+		provider := strings.ToLower(strings.TrimSpace(session.Provider))
+		if provider == "" {
+			provider = "unknown"
+		}
+		bucket, ok := byProvider[provider]
+		if !ok {
+			bucket = map[string]int{
+				"total":      0,
+				"pending":    0,
+				"authorized": 0,
+				"expired":    0,
+				"rejected":   0,
+			}
+			byProvider[provider] = bucket
+		}
+		bucket["total"]++
+		switch session.Status {
+		case LoginAuthorized:
+			authorized++
+			bucket["authorized"]++
+		case LoginExpired:
+			expired++
+			bucket["expired"]++
+		case LoginRejected:
+			rejected++
+			bucket["rejected"]++
+		default:
+			pending++
+			bucket["pending"]++
+		}
+	}
+	return map[string]any{
+		"total":      len(sessions),
+		"pending":    pending,
+		"authorized": authorized,
+		"expired":    expired,
+		"rejected":   rejected,
+		"byProvider": byProvider,
+	}
 }
 
 func (m *Manager) applyExpiry(session Session) Session {

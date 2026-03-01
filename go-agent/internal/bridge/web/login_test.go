@@ -87,3 +87,39 @@ func TestProviderVerificationURI(t *testing.T) {
 		}
 	}
 }
+
+func TestSummaryByProviderAndStatus(t *testing.T) {
+	m := NewManager(5 * time.Minute)
+	chatgpt := m.Start(StartOptions{Provider: "chatgpt", Model: "gpt-5.2"})
+	codex := m.Start(StartOptions{Provider: "codex", Model: "gpt-5.2"})
+	if _, err := m.Complete(codex.ID, codex.Code); err != nil {
+		t.Fatalf("complete codex failed: %v", err)
+	}
+	if !m.Logout(chatgpt.ID) {
+		t.Fatalf("expected logout chatgpt session")
+	}
+
+	summary := m.Summary()
+	total, _ := summary["total"].(int)
+	if total != 2 {
+		t.Fatalf("expected total=2, got %v", summary["total"])
+	}
+	authorized, _ := summary["authorized"].(int)
+	if authorized != 1 {
+		t.Fatalf("expected authorized=1, got %v", summary["authorized"])
+	}
+	rejected, _ := summary["rejected"].(int)
+	if rejected != 1 {
+		t.Fatalf("expected rejected=1, got %v", summary["rejected"])
+	}
+	byProvider, _ := summary["byProvider"].(map[string]map[string]int)
+	if byProvider == nil {
+		t.Fatalf("expected byProvider map")
+	}
+	if byProvider["codex"]["authorized"] != 1 {
+		t.Fatalf("expected codex authorized=1, got %v", byProvider["codex"]["authorized"])
+	}
+	if byProvider["chatgpt"]["rejected"] != 1 {
+		t.Fatalf("expected chatgpt rejected=1, got %v", byProvider["chatgpt"]["rejected"])
+	}
+}

@@ -776,8 +776,12 @@ func TestTelegramCommandFlowModelAuthTTS(t *testing.T) {
 	if authBridgeMeta["type"] != "auth.bridge" {
 		t.Fatalf("expected auth.bridge metadata, got %v", authBridgeMeta["type"])
 	}
-	if _, ok := authBridgeMeta["bridge"].(map[string]any); !ok {
+	bridgeObj, ok := authBridgeMeta["bridge"].(map[string]any)
+	if !ok {
 		t.Fatalf("expected bridge object in auth.bridge metadata")
+	}
+	if _, ok := bridgeObj["sessions"].(map[string]any); !ok {
+		t.Fatalf("expected bridge sessions summary object")
 	}
 
 	authURLResult := runCommand("tg-cmd-auth-url", "/auth url")
