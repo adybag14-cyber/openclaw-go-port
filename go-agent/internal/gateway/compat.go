@@ -1044,11 +1044,7 @@ func (s *Server) handleCompatMethod(ctx context.Context, requestID string, canon
 	case "cron.runs":
 		return s.handleCompatCronRuns(params), nil
 	case "auth.oauth.providers":
-		return map[string]any{
-			"providers": authProviderCatalogPayload(func(provider string) bool {
-				return s.compat.hasProviderAPIKey(provider)
-			}),
-		}, nil
+		return s.handleCompatAuthOAuthProviders(params)
 	case "auth.oauth.import":
 		return s.handleCompatOAuthImport(params)
 	case "wizard.start":
@@ -1616,6 +1612,46 @@ func (s *Server) handleCompatSkillsUpdate(params map[string]any) map[string]any 
 		"ok":    true,
 		"skill": cloneMap(entry),
 	}
+}
+
+func (s *Server) handleCompatAuthOAuthProviders(params map[string]any) (map[string]any, *dispatchError) {
+	allowed := map[string]struct{}{
+		"provider": {},
+	}
+	for key := range params {
+		if _, ok := allowed[key]; !ok {
+			return nil, &dispatchError{
+				Code:    -32602,
+				Message: fmt.Sprintf("invalid auth.oauth.providers params: unknown field %q", key),
+				Details: map[string]any{"field": key},
+			}
+		}
+	}
+
+	requestedProvider := normalizeProviderAlias(toString(params["provider"], ""))
+	providers := authProviderCatalogPayload(func(provider string) bool {
+		return s.compat.hasProviderAPIKey(provider)
+	})
+	filtered := make([]map[string]any, 0, len(providers))
+	for _, provider := range providers {
+		id := normalizeProviderAlias(toString(provider["id"], ""))
+		if requestedProvider != "" && id != requestedProvider {
+			continue
+		}
+		filtered = append(filtered, provider)
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		return toString(filtered[i]["id"], "") < toString(filtered[j]["id"], "")
+	})
+
+	payload := map[string]any{
+		"count":     len(filtered),
+		"providers": filtered,
+	}
+	if requestedProvider != "" {
+		payload["providerRequested"] = requestedProvider
+	}
+	return payload, nil
 }
 
 func (s *Server) handleCompatOAuthImport(params map[string]any) (map[string]any, *dispatchError) {

@@ -841,3 +841,17 @@
   - `/usr/local/go/bin/gofmt -w ...`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation (Issue #16) - Slice 1: `auth.oauth.providers` Contract Depth
+
+- Replaced inline compat `auth.oauth.providers` payload path with structured handler semantics:
+  - strict parameter validation with deterministic `-32602` for unknown fields.
+  - provider-scoped filtering using canonical alias normalization (`openai-codex -> codex`, etc.).
+  - deterministic provider ordering and explicit metadata fields (`count`, `providerRequested`).
+- Added parity-focused tests:
+  - invalid params rejection for `auth.oauth.providers`.
+  - alias-based provider filter behavior (`openai-codex` request resolves to canonical `codex` entry).
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`

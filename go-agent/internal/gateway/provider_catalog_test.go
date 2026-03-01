@@ -208,3 +208,40 @@ func TestCompatModelsListProviderFilterSupportsCopawAlias(t *testing.T) {
 		}
 	}
 }
+
+func TestCompatAuthOAuthProvidersRejectsUnknownParams(t *testing.T) {
+	s := New(config.Default(), buildinfo.Default())
+	defer s.Close()
+
+	_, derr := s.handleCompatMethod(context.Background(), "oauth-providers-invalid", "auth.oauth.providers", map[string]any{
+		"unknownField": true,
+	})
+	if derr == nil {
+		t.Fatalf("expected auth.oauth.providers invalid params error")
+	}
+	if derr.Code != -32602 {
+		t.Fatalf("expected -32602 for invalid auth.oauth.providers params, got %d", derr.Code)
+	}
+}
+
+func TestCompatAuthOAuthProvidersFilterSupportsAlias(t *testing.T) {
+	s := New(config.Default(), buildinfo.Default())
+	defer s.Close()
+
+	result, derr := s.handleCompatMethod(context.Background(), "oauth-providers-filter", "auth.oauth.providers", map[string]any{
+		"provider": "openai-codex",
+	})
+	if derr != nil {
+		t.Fatalf("auth.oauth.providers failed: %+v", *derr)
+	}
+	if toString(result["providerRequested"], "") != "codex" {
+		t.Fatalf("expected providerRequested=codex, got %v", result["providerRequested"])
+	}
+	providers, ok := result["providers"].([]map[string]any)
+	if !ok || len(providers) != 1 {
+		t.Fatalf("expected single filtered provider entry, got %T len=%d", result["providers"], len(providers))
+	}
+	if id := toString(providers[0]["id"], ""); id != "codex" {
+		t.Fatalf("expected filtered provider id codex, got %q", id)
+	}
+}
