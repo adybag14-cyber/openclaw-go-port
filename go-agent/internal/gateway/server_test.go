@@ -1937,6 +1937,65 @@ func TestEdgeMeshStatusReflectsNodePairApprovals(t *testing.T) {
 	}
 }
 
+func TestEdgeHomomorphicCipherValidationParity(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-edge-homomorphic-validation"
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	missingKey := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-homo-missing-key",
+		"method": "edge.homomorphic.compute",
+		"params": map[string]any{
+			"ciphertexts": []any{"enc:a"},
+		},
+	})
+	assertRPCErrorCode(t, missingKey, -32602)
+
+	invalidOp := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-homo-invalid-op",
+		"method": "edge.homomorphic.compute",
+		"params": map[string]any{
+			"keyId":       "key-1",
+			"operation":   "max",
+			"ciphertexts": []any{"enc:a"},
+		},
+	})
+	assertRPCErrorCode(t, invalidOp, -32602)
+
+	meanNeedsReveal := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-homo-mean-reveal",
+		"method": "edge.homomorphic.compute",
+		"params": map[string]any{
+			"keyId":       "key-1",
+			"operation":   "mean",
+			"ciphertexts": []any{"enc:a", "enc:b"},
+		},
+	})
+	assertRPCErrorCode(t, meanNeedsReveal, -32602)
+
+	validMean := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-homo-mean-ok",
+		"method": "edge.homomorphic.compute",
+		"params": map[string]any{
+			"keyId":        "key-1",
+			"operation":    "mean",
+			"revealResult": true,
+			"ciphertexts":  []any{"enc:a", "enc:b", "enc:c"},
+		},
+	})
+	result := assertRPCResult(t, validMean)
+	if mode, _ := result["mode"].(string); mode != "ciphertext" {
+		t.Fatalf("expected ciphertext mode, got %v", result["mode"])
+	}
+}
+
 func TestEdgeIdentityTrustStatusDegradesWithPendingApprovals(t *testing.T) {
 	cfg := config.Default()
 	cfg.Runtime.StatePath = "memory://test-edge-trust"

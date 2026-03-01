@@ -381,7 +381,7 @@ func (s *Server) dispatchRPC(ctx context.Context, requestID string, canonical st
 	case "edge.mesh.status":
 		return s.handleEdgeMeshStatus(), nil
 	case "edge.homomorphic.compute":
-		return s.handleEdgeHomomorphicCompute(params), nil
+		return s.handleEdgeHomomorphicCompute(params)
 	case "edge.finetune.status":
 		return s.handleEdgeFinetuneStatus(), nil
 	case "edge.finetune.run":
@@ -1275,13 +1275,22 @@ func (s *Server) handleEdgeMeshStatus() map[string]any {
 	}
 }
 
-func (s *Server) handleEdgeHomomorphicCompute(params map[string]any) map[string]any {
+func (s *Server) handleEdgeHomomorphicCompute(params map[string]any) (map[string]any, *dispatchError) {
 	op := strings.ToLower(toString(params["operation"], "sum"))
 	keyID := normalizeOptionalText(firstNonEmptyValue(params, "keyId"), 128)
 	ciphertexts := toStringSlice(params["ciphertexts"])
 	if keyID != "" || len(ciphertexts) > 0 {
 		if keyID == "" {
-			keyID = "key-local-default"
+			return nil, &dispatchError{
+				Code:    -32602,
+				Message: "edge.homomorphic.compute requires keyId",
+			}
+		}
+		if !slicesContains([]string{"sum", "count", "mean"}, op) {
+			return nil, &dispatchError{
+				Code:    -32602,
+				Message: "edge.homomorphic.compute operation must be sum, count, or mean",
+			}
 		}
 		validCiphertexts := make([]string, 0, len(ciphertexts))
 		for _, entry := range ciphertexts {
@@ -1289,11 +1298,20 @@ func (s *Server) handleEdgeHomomorphicCompute(params map[string]any) map[string]
 				validCiphertexts = append(validCiphertexts, normalized)
 			}
 		}
-		if !slicesContains([]string{"sum", "count", "mean"}, op) {
-			op = "sum"
+		if len(validCiphertexts) == 0 {
+			return nil, &dispatchError{
+				Code:    -32602,
+				Message: "edge.homomorphic.compute requires ciphertexts: string[]",
+			}
 		}
 		count := len(validCiphertexts)
 		revealResult := toBool(params["revealResult"], false)
+		if op == "mean" && !revealResult {
+			return nil, &dispatchError{
+				Code:    -32602,
+				Message: "edge.homomorphic.compute mean requires revealResult=true",
+			}
+		}
 		aggregate := count
 		if op == "sum" {
 			aggregate = 0
@@ -1320,7 +1338,7 @@ func (s *Server) handleEdgeHomomorphicCompute(params map[string]any) map[string]
 				}
 				return nil
 			}(),
-		}
+		}, nil
 	}
 	values := asSlice(params["values"])
 	total := 0.0
@@ -1355,7 +1373,7 @@ func (s *Server) handleEdgeHomomorphicCompute(params map[string]any) map[string]
 		"operation": op,
 		"result":    result,
 		"count":     len(values),
-	}
+	}, nil
 }
 
 func (s *Server) handleEdgeFinetuneStatus() map[string]any {

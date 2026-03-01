@@ -619,3 +619,18 @@
   - `/usr/local/go/bin/gofmt -w ...`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation (Issue #7) - Slice 1: Homomorphic Contract Parity Hardening
+
+- Hardened `edge.homomorphic.compute` ciphertext contract behavior toward Rust parity:
+  - ciphertext mode now rejects missing `keyId`.
+  - ciphertext mode now rejects unsupported operations (only `sum|count|mean`).
+  - ciphertext mode now rejects empty ciphertext sets.
+  - ciphertext `mean` now requires `revealResult=true`.
+- Preserved existing plaintext fallback flow for backward-compatible non-ciphertext calls.
+- Added integration test coverage:
+  - `TestEdgeHomomorphicCipherValidationParity`.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`
