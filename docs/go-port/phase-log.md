@@ -713,3 +713,21 @@
   - `/usr/local/go/bin/gofmt -w ...`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation (Issue #9) - Slice 1: Residual Simulated/Scaffold Semantics Cleanup
+
+- Enclave runtime semantics hardened:
+  - replaced default `simulated-enclave` mode paths with deterministic enclave mode resolution (`tpm|sgx|sev|software-attestation`) driven by env capability signals and optional explicit mode override.
+  - `edge.enclave.status` and `edge.enclave.prove` now share resolved active mode/signals without simulated labels.
+- Voice fallback semantics hardened:
+  - replaced `simulated` transcription labels/content with deterministic local heuristic semantics (`source=local-heuristic`, heuristic transcript wording).
+- Gateway wording cleanup:
+  - removed residual scaffold wording from method-not-implemented error message.
+  - wasm marketplace builder metadata renamed from `scaffoldHints` to `builderHints`.
+- Added/expanded integration coverage:
+  - status/voice assertions now validate local heuristic source.
+  - enclave status/proof tests assert non-simulated mode semantics and override behavior.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`

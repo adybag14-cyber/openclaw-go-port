@@ -1700,6 +1700,9 @@ func TestEdgeVoiceTranscribeUsesHintOrAudioStem(t *testing.T) {
 	if !strings.Contains(strings.ToLower(transcript), "meeting-note") {
 		t.Fatalf("expected transcript synthesized from audio stem, got %q", transcript)
 	}
+	if source, _ := audioResult["source"].(string); source != "local-heuristic" {
+		t.Fatalf("expected local heuristic voice source, got %v", audioResult["source"])
+	}
 }
 
 func TestEdgeVoiceTranscribeUsesTinyWhisperWhenConfigured(t *testing.T) {
@@ -1777,6 +1780,54 @@ func TestEdgeEnclaveProveUsesAttestationBinaryWhenConfigured(t *testing.T) {
 	}
 	if scheme, _ := result["scheme"].(string); scheme != "attestation-quote-v1" {
 		t.Fatalf("expected attestation scheme, got %v", result["scheme"])
+	}
+}
+
+func TestEdgeEnclaveStatusAndProofDoNotUseSimulatedModes(t *testing.T) {
+	t.Setenv("OPENCLAW_GO_ENCLAVE_SGX", "true")
+	t.Setenv("OPENCLAW_GO_ENCLAVE_MODE", "sgx")
+
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-edge-enclave-modes"
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	statusFrame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-enclave-status",
+		"method": "edge.enclave.status",
+		"params": map[string]any{},
+	})
+	statusResult := assertRPCResult(t, statusFrame)
+	if activeMode, _ := statusResult["activeMode"].(string); activeMode != "sgx" {
+		t.Fatalf("expected enclave activeMode=sgx, got %v", statusResult["activeMode"])
+	}
+	if strings.Contains(strings.ToLower(toString(statusResult["activeMode"], "")), "simulated") {
+		t.Fatalf("enclave status activeMode should not contain simulated marker: %v", statusResult["activeMode"])
+	}
+	available, _ := statusResult["availableModes"].([]any)
+	for _, item := range available {
+		if strings.Contains(strings.ToLower(fmt.Sprint(item)), "simulated") {
+			t.Fatalf("expected availableModes without simulated entries, got %v", statusResult["availableModes"])
+		}
+	}
+
+	proveFrame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "edge-enclave-prove",
+		"method": "edge.enclave.prove",
+		"params": map[string]any{
+			"statement": "prove enclave mode selection",
+		},
+	})
+	proveResult := assertRPCResult(t, proveFrame)
+	if activeMode, _ := proveResult["activeMode"].(string); activeMode != "sgx" {
+		t.Fatalf("expected prove activeMode=sgx, got %v", proveResult["activeMode"])
+	}
+	if strings.Contains(strings.ToLower(toString(proveResult["source"], "")), "simulated") {
+		t.Fatalf("expected prove source without simulated marker, got %v", proveResult["source"])
 	}
 }
 

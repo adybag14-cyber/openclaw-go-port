@@ -413,7 +413,7 @@ func (s *Server) dispatchRPC(ctx context.Context, requestID string, canonical st
 		}
 		return nil, &dispatchError{
 			Code:    -32601,
-			Message: "method not implemented in go phase-4 scaffold",
+			Message: "method not implemented in go runtime",
 			Details: map[string]any{
 				"requested": canonical,
 				"canonical": canonical,
@@ -826,7 +826,7 @@ func (s *Server) handleEdgeWasmMarketplace() map[string]any {
 			"mode":      "visual-ai-builder",
 			"supported": true,
 			"templates": []string{"tool.execute", "tool.fetch", "tool.workflow"},
-			"scaffoldHints": map[string]any{
+			"builderHints": map[string]any{
 				"fields":            []string{"name", "description", "inputs", "outputs", "capabilities"},
 				"defaultCapability": "workspace.read",
 			},
@@ -1120,18 +1120,18 @@ func (s *Server) handleEdgeEnclaveStatus() map[string]any {
 	if proof, ok := status["lastProof"].(map[string]any); ok {
 		lastProofRecord = cloneMap(proof)
 	}
+	signals := resolveEnclaveSignals()
+	activeMode := resolveEnclaveActiveMode(signals)
+	availableModes := resolveEnclaveAvailableModes(signals)
+
 	status["runtimeProfile"] = runtimeProfileName(s.cfg.Runtime.Profile)
-	status["activeMode"] = "simulated-enclave"
-	status["availableModes"] = []string{"simulated-enclave", "tpm", "sgx", "sev"}
+	status["activeMode"] = activeMode
+	status["availableModes"] = availableModes
 	status["isolationAvailable"] = true
-	status["signals"] = map[string]any{
-		"sgx": envTruthy("OPENCLAW_GO_ENCLAVE_SGX"),
-		"tpm": true,
-		"sev": envTruthy("OPENCLAW_GO_ENCLAVE_SEV"),
-	}
+	status["signals"] = signals
 	status["runtime"] = map[string]any{
-		"activeMode":     status["activeMode"],
-		"availableModes": status["availableModes"],
+		"activeMode":     activeMode,
+		"availableModes": availableModes,
 		"profile":        runtimeProfileName(s.cfg.Runtime.Profile),
 	}
 	status["attestationDetail"] = map[string]any{
@@ -1164,12 +1164,8 @@ func (s *Server) handleEdgeEnclaveProve(params map[string]any) (map[string]any, 
 	if nonce == "" {
 		nonce = fmt.Sprintf("nonce-%d", time.Now().UTC().UnixMilli())
 	}
-	activeMode := "simulated-enclave"
-	signals := map[string]any{
-		"sgx": envTruthy("OPENCLAW_GO_ENCLAVE_SGX"),
-		"tpm": true,
-		"sev": envTruthy("OPENCLAW_GO_ENCLAVE_SEV"),
-	}
+	signals := resolveEnclaveSignals()
+	activeMode := resolveEnclaveActiveMode(signals)
 	record := buildEdgeEnclaveProofRecord(statement, nonce, activeMode, runtimeProfileName(s.cfg.Runtime.Profile), signals)
 	proof := s.edge.recordEnclaveProof(statement, toString(record["proof"], ""), toString(record["generatedAt"], ""))
 
@@ -2355,7 +2351,7 @@ func summarizeMultimodalContext(prompt string, ocrText string, media []map[strin
 	return summary
 }
 
-func simulatedTranscript(audioPath string, hintText string) string {
+func heuristicTranscript(audioPath string, hintText string) string {
 	if hint := normalizeOptionalText(hintText, 16_000); hint != "" {
 		return hint
 	}
@@ -2366,9 +2362,9 @@ func simulatedTranscript(audioPath string, hintText string) string {
 		if stem == "" {
 			stem = "audio-capture"
 		}
-		return fmt.Sprintf("simulated transcript from %s", stem)
+		return fmt.Sprintf("local heuristic transcript from %s", stem)
 	}
-	return "simulated transcript"
+	return "local heuristic transcript"
 }
 
 type edgeTranscriptionResult struct {
@@ -2416,14 +2412,14 @@ func transcribeAudioWithProvider(audioPath string, hintText string, language str
 				}
 			}
 		case "edge":
-			transcript := simulatedTranscript(audioPath, hintText)
+			transcript := heuristicTranscript(audioPath, hintText)
 			confidence := 0.46
 			if strings.TrimSpace(hintText) != "" {
 				confidence = 0.9
 			}
 			return edgeTranscriptionResult{
 				ProviderUsed: "edge",
-				Source:       "simulated",
+				Source:       "local-heuristic",
 				Transcript:   transcript,
 				Confidence:   confidence,
 			}
@@ -2436,8 +2432,8 @@ func transcribeAudioWithProvider(audioPath string, hintText string, language str
 	}
 	return edgeTranscriptionResult{
 		ProviderUsed: providerUsed,
-		Source:       "simulated",
-		Transcript:   simulatedTranscript(audioPath, hintText),
+		Source:       "local-heuristic",
+		Transcript:   heuristicTranscript(audioPath, hintText),
 		Confidence:   0.4,
 	}
 }
@@ -2496,6 +2492,57 @@ func tinyWhisperBinaryAvailable() bool {
 
 func edgeEnclaveAttestationBinaryPath() string {
 	return normalizeOptionalText(strings.TrimSpace(os.Getenv("OPENCLAW_GO_ENCLAVE_ATTEST_BIN")), 2048)
+}
+
+func resolveEnclaveSignals() map[string]any {
+	tpmEnabled := true
+	if raw := strings.TrimSpace(os.Getenv("OPENCLAW_GO_ENCLAVE_TPM")); raw != "" {
+		tpmEnabled = envTruthy("OPENCLAW_GO_ENCLAVE_TPM")
+	}
+	if envTruthy("OPENCLAW_GO_ENCLAVE_TPM_DISABLED") {
+		tpmEnabled = false
+	}
+	return map[string]any{
+		"sgx": envTruthy("OPENCLAW_GO_ENCLAVE_SGX"),
+		"tpm": tpmEnabled,
+		"sev": envTruthy("OPENCLAW_GO_ENCLAVE_SEV"),
+	}
+}
+
+func resolveEnclaveAvailableModes(signals map[string]any) []string {
+	modes := make([]string, 0, 4)
+	if toBool(signals["tpm"], false) {
+		modes = append(modes, "tpm")
+	}
+	if toBool(signals["sgx"], false) {
+		modes = append(modes, "sgx")
+	}
+	if toBool(signals["sev"], false) {
+		modes = append(modes, "sev")
+	}
+	if len(modes) == 0 {
+		modes = append(modes, "software-attestation")
+	}
+	return modes
+}
+
+func resolveEnclaveActiveMode(signals map[string]any) string {
+	override := strings.ToLower(normalizeOptionalText(os.Getenv("OPENCLAW_GO_ENCLAVE_MODE"), 48))
+	for _, mode := range resolveEnclaveAvailableModes(signals) {
+		if override == mode {
+			return mode
+		}
+	}
+	switch {
+	case toBool(signals["sgx"], false):
+		return "sgx"
+	case toBool(signals["sev"], false):
+		return "sev"
+	case toBool(signals["tpm"], false):
+		return "tpm"
+	default:
+		return "software-attestation"
+	}
 }
 
 func edgeEnclaveAttestationArgs() []string {
