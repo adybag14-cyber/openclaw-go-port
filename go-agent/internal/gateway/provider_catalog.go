@@ -111,6 +111,22 @@ func oauthProviderCatalogEntries() []oauthProviderCatalogEntry {
 	return entries
 }
 
+func resolveOAuthProviderCatalogEntry(provider string) (oauthProviderCatalogEntry, bool) {
+	canonical := normalizeProviderID(provider)
+	for _, entry := range oauthProviderCatalog {
+		if entry.ID == canonical {
+			return oauthProviderCatalogEntry{
+				ID:                     entry.ID,
+				DisplayName:            entry.DisplayName,
+				Aliases:                append([]string{}, entry.Aliases...),
+				VerificationURL:        entry.VerificationURL,
+				SupportsBrowserSession: entry.SupportsBrowserSession,
+			}, true
+		}
+	}
+	return oauthProviderCatalogEntry{}, false
+}
+
 func authProviderCatalogPayload(apiKeyConfigured func(provider string) bool) []map[string]any {
 	entries := oauthProviderCatalogEntries()
 	out := make([]map[string]any, 0, len(entries))

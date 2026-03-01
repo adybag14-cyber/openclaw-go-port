@@ -1655,8 +1655,43 @@ func (s *Server) handleCompatAuthOAuthProviders(params map[string]any) (map[stri
 }
 
 func (s *Server) handleCompatOAuthImport(params map[string]any) (map[string]any, *dispatchError) {
-	provider := toString(params["provider"], "chatgpt")
-	model := toString(params["model"], "gpt-5.2")
+	allowed := map[string]struct{}{
+		"provider":       {},
+		"model":          {},
+		"loginSessionId": {},
+		"code":           {},
+	}
+	for key := range params {
+		if _, ok := allowed[key]; !ok {
+			return nil, &dispatchError{
+				Code:    -32602,
+				Message: fmt.Sprintf("invalid auth.oauth.import params: unknown field %q", key),
+				Details: map[string]any{"field": key},
+			}
+		}
+	}
+
+	providerRaw := toString(params["provider"], "chatgpt")
+	providerEntry, ok := resolveOAuthProviderCatalogEntry(providerRaw)
+	if !ok {
+		return nil, &dispatchError{
+			Code:    -32602,
+			Message: "unknown oauth provider",
+			Details: map[string]any{
+				"provider": providerRaw,
+				"known":    knownAuthProviders(),
+			},
+		}
+	}
+	provider := providerEntry.ID
+	model := toString(params["model"], "")
+	if strings.TrimSpace(model) == "" {
+		if fallbackModel, ok := s.compat.defaultModelForProvider(provider); ok {
+			model = fallbackModel
+		} else {
+			model = "gpt-5.2"
+		}
+	}
 	loginID := toString(params["loginSessionId"], "")
 	code := strings.TrimSpace(toString(params["code"], ""))
 
@@ -1687,8 +1722,10 @@ func (s *Server) handleCompatOAuthImport(params map[string]any) (map[string]any,
 		}
 	}
 	return map[string]any{
-		"imported": true,
-		"login":    session,
+		"imported":            true,
+		"providerId":          providerEntry.ID,
+		"providerDisplayName": providerEntry.DisplayName,
+		"login":               session,
 	}, nil
 }
 

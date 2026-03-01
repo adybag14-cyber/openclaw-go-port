@@ -855,3 +855,21 @@
   - `/usr/local/go/bin/gofmt -w ...`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation (Issue #17) - Slice 1: `auth.oauth.import` Provider Hardening
+
+- Hardened `auth.oauth.import` compatibility contract:
+  - strict unknown-field validation with deterministic `-32602`.
+  - provider now resolves through OAuth provider catalog with alias canonicalization.
+  - unknown providers now fail fast with explicit known-provider hints.
+- Improved import response metadata:
+  - added canonical provider fields: `providerId`, `providerDisplayName`.
+  - preserved existing `login` payload and import flow behavior.
+- Model defaults during import now use provider-scoped defaults when model is omitted.
+- Added parity-focused tests:
+  - unknown provider rejection path.
+  - alias canonicalization path (`openai-codex` resolves to `codex`) with authorized login assertion.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`

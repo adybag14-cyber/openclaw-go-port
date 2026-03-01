@@ -58,3 +58,4 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 - Slice 20 complete (Issue #14): provider-aware browser runtime bridge semantics (provider passthrough + alias normalization including `copaw`) for `browser.request` completion payloads and response metadata.
 - Slice 21 complete (Issue #15): `models.list` contract depth (strict unknown-param rejection, provider alias filtering, deterministic ordering, and provider metadata summary).
 - Slice 22 complete (Issue #16): `auth.oauth.providers` contract depth (strict unknown-param rejection, alias-aware provider filtering, deterministic ordering, and explicit count/providerRequested metadata).
+- Slice 23 complete (Issue #17): `auth.oauth.import` hardening (strict unknown-param rejection, catalog-backed provider canonicalization, unknown-provider rejection, and canonical provider metadata in responses).

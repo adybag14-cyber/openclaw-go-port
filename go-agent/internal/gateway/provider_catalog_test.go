@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	webbridge "github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/bridge/web"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/buildinfo"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/config"
 )
@@ -243,5 +244,48 @@ func TestCompatAuthOAuthProvidersFilterSupportsAlias(t *testing.T) {
 	}
 	if id := toString(providers[0]["id"], ""); id != "codex" {
 		t.Fatalf("expected filtered provider id codex, got %q", id)
+	}
+}
+
+func TestCompatOAuthImportRejectsUnknownProvider(t *testing.T) {
+	s := New(config.Default(), buildinfo.Default())
+	defer s.Close()
+
+	_, derr := s.handleCompatMethod(context.Background(), "oauth-import-invalid", "auth.oauth.import", map[string]any{
+		"provider": "unknown-oauth-provider",
+	})
+	if derr == nil {
+		t.Fatalf("expected auth.oauth.import to reject unknown provider")
+	}
+	if derr.Code != -32602 {
+		t.Fatalf("expected -32602 for unknown provider, got %d", derr.Code)
+	}
+}
+
+func TestCompatOAuthImportCanonicalizesProviderAlias(t *testing.T) {
+	s := New(config.Default(), buildinfo.Default())
+	defer s.Close()
+
+	result, derr := s.handleCompatMethod(context.Background(), "oauth-import-codex", "auth.oauth.import", map[string]any{
+		"provider": "openai-codex",
+	})
+	if derr != nil {
+		t.Fatalf("auth.oauth.import failed: %+v", *derr)
+	}
+	if toString(result["providerId"], "") != "codex" {
+		t.Fatalf("expected providerId=codex, got %v", result["providerId"])
+	}
+	if toString(result["providerDisplayName"], "") == "" {
+		t.Fatalf("expected non-empty providerDisplayName")
+	}
+	login, ok := result["login"].(webbridge.Session)
+	if !ok {
+		t.Fatalf("expected login session object, got %T", result["login"])
+	}
+	if login.Provider != "codex" {
+		t.Fatalf("expected imported login provider codex, got %v", login.Provider)
+	}
+	if login.Status != webbridge.LoginAuthorized {
+		t.Fatalf("expected authorized login status, got %v", login.Status)
 	}
 }
