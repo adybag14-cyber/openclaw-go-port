@@ -62,3 +62,4 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 - Slice 24 complete (Issue #18): provider-specific browser bridge routing (canonical provider endpoint overrides with default fallback, plus provider-aware endpoint metadata in runtime responses).
 - Slice 25 complete (Issue #19): Telegram `/auth complete` extraction robustness (query/fragment/path callback code parsing plus Copaw/Qwen alias completion parsing coverage).
 - Slice 26 complete (Issue #20): TTS runtime depth parity (provider catalog availability metadata, `kittentts` adapter execution path, strict real-audio conversion mode, and Telegram `/tts` contract alignment).
+- Slice 27 complete (Issue #21): Telegram runtime parity closure (real Bot API delivery + inbound long-poll command/plain-text reply loop) while preserving generic multi-channel adapter behavior.

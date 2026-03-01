@@ -2,6 +2,8 @@ package channels
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +12,28 @@ import (
 )
 
 func TestRegistrySendAndStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		if r.URL.Path != "/bottoken/sendMessage" {
+			t.Fatalf("unexpected telegram path: %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]any
+		_ = json.Unmarshal(body, &payload)
+		if payload["chat_id"] != "chat-1" {
+			t.Fatalf("unexpected chat_id payload: %v", payload["chat_id"])
+		}
+		if payload["text"] != "hello" {
+			t.Fatalf("unexpected text payload: %v", payload["text"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":101,"date":1700000000,"chat":{"id":1}}}`))
+	}))
+	defer server.Close()
+	t.Setenv("OPENCLAW_GO_TELEGRAM_API_BASE", server.URL)
+
 	reg := NewRegistry("token", "chat-1")
 	status := reg.Status()
 	if len(status) < 10 {
@@ -25,6 +49,9 @@ func TestRegistrySendAndStatus(t *testing.T) {
 	}
 	if receipt.Channel != "telegram" {
 		t.Fatalf("unexpected receipt channel: %s", receipt.Channel)
+	}
+	if receipt.Status != "delivered" {
+		t.Fatalf("unexpected receipt status: %s", receipt.Status)
 	}
 }
 

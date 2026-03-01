@@ -15,6 +15,7 @@ import (
 	stdruntime "runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	webbridge "github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/bridge/web"
@@ -62,6 +63,10 @@ type Server struct {
 	wasm      *wasmruntime.Runtime
 	webLogin  *webbridge.Manager
 	edge      *edgeState
+
+	backgroundMu     sync.Mutex
+	backgroundCancel context.CancelFunc
+	backgroundWG     sync.WaitGroup
 }
 
 func New(cfg config.Config, build buildinfo.Info) *Server {
@@ -119,6 +124,14 @@ func New(cfg config.Config, build buildinfo.Info) *Server {
 }
 
 func (s *Server) Close() {
+	s.backgroundMu.Lock()
+	cancel := s.backgroundCancel
+	s.backgroundCancel = nil
+	s.backgroundMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	s.backgroundWG.Wait()
 	if s.scheduler != nil {
 		s.scheduler.Stop()
 	}
@@ -133,6 +146,11 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) Run(ctx context.Context) error {
+	runCtx, cancelBackground := context.WithCancel(ctx)
+	s.backgroundMu.Lock()
+	s.backgroundCancel = cancelBackground
+	s.backgroundMu.Unlock()
+
 	httpServer := &http.Server{
 		Addr:              s.cfg.Gateway.Server.HTTPBind,
 		Handler:           s.Handler(),
@@ -153,15 +171,18 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		errCh <- nil
 	}()
+	s.startBackgroundRuntimes(runCtx)
 
 	select {
 	case <-ctx.Done():
+		cancelBackground()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = httpServer.Shutdown(shutdownCtx)
 		s.Close()
 		return <-errCh
 	case err := <-errCh:
+		cancelBackground()
 		s.Close()
 		return err
 	}
@@ -2123,6 +2144,20 @@ func (s *Server) recordMemory(job scheduler.Job, role string, text string, paylo
 	}
 	s.memory.Append(entry)
 	s.state.TouchMessage(job.SessionID, channel, job.Method, text)
+}
+
+func (s *Server) recordChannelMemory(sessionID string, channel string, method string, role string, text string, payload map[string]any) {
+	normalizedChannel := strings.ToLower(strings.TrimSpace(channel))
+	entry := memory.MessageEntry{
+		SessionID: strings.TrimSpace(sessionID),
+		Channel:   normalizedChannel,
+		Method:    strings.TrimSpace(method),
+		Role:      strings.TrimSpace(role),
+		Text:      text,
+		Payload:   payload,
+	}
+	s.memory.Append(entry)
+	s.state.TouchMessage(sessionID, normalizedChannel, method, text)
 }
 
 func (s *Server) resolveAuthMode() string {

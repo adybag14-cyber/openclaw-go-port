@@ -5,6 +5,31 @@
 ### Highlights
 - No unreleased changes.
 
+## v2.9.0-go - 2026-03-01
+
+### Highlights
+- Replaced Telegram stub delivery with real Telegram Bot API send path:
+  - `channels.telegram` now calls `sendMessage` with live HTTP delivery.
+  - channel status now reflects live connectivity and last API error state.
+  - configurable Telegram API base for testing/proxying via `OPENCLAW_GO_TELEGRAM_API_BASE`.
+- Added Telegram inbound runtime loop in gateway service:
+  - long-polls `getUpdates` when Telegram bot token is configured.
+  - routes slash commands (`/model`, `/auth`, `/tts`, `/set`) through existing command handlers and sends command replies back to Telegram chat IDs.
+  - routes normal inbound text through browser bridge completion flow and sends assistant replies back to Telegram.
+- Preserved multi-channel adapter breadth:
+  - webhook/token-ready adapters remain stable for WhatsApp/Discord/Slack/Feishu/QQ/WeWork/DingTalk/Infoflow/GoogleChat/Teams/Matrix/Signal/Line/Mattermost/iMessage.
+- Added regression coverage:
+  - channels: real Telegram `sendMessage` behavior via mocked API.
+  - gateway: inbound command and plain-text Telegram update processing with delivered reply assertions.
+
+### Validation
+- Dockerized formatting + validation:
+  - `gofmt -w ./internal/channels/telegram_driver.go ./internal/channels/registry_test.go ./internal/gateway/server.go ./internal/gateway/server_test.go ./internal/gateway/telegram_runtime.go ./internal/gateway/telegram_runtime_test.go`
+  - `go test ./...`
+  - `go vet ./...`
+- Release build matrix:
+  - `go-agent/scripts/build-matrix.sh 2.9.0 ../dist/release-v2.9.0-go-assets`
+
 ## v2.8.0-go - 2026-03-01
 
 ### Highlights

@@ -498,6 +498,16 @@ func TestBrowserRequestHonorsSpecifiedLoginSessionAuthorization(t *testing.T) {
 }
 
 func TestChannelsSendAndHistoryFlow(t *testing.T) {
+	telegramAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/bottelegram-bot-token/sendMessage" {
+			t.Fatalf("unexpected telegram endpoint: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":7,"chat":{"id":1},"date":1700000000}}`))
+	}))
+	defer telegramAPI.Close()
+	t.Setenv("OPENCLAW_GO_TELEGRAM_API_BASE", telegramAPI.URL)
+
 	cfg := config.Default()
 	cfg.Runtime.StatePath = "memory://test-channels"
 	cfg.Channels.Telegram.BotToken = "telegram-bot-token"

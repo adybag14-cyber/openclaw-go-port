@@ -1015,3 +1015,26 @@
   - `/usr/local/go/bin/gofmt -w ./internal/gateway/compat.go ./internal/gateway/telegram_commands.go ./internal/gateway/server_test.go ./internal/gateway/compat_tts_test.go`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation - v2.9.0-go Telegram Runtime Live Delivery + Inbound Reply Loop
+
+- Opened tracking issue for this slice:
+  - `https://github.com/adybag14-cyber/openclaw-go-port/issues/21`
+- Replaced Telegram stub driver behavior with real Bot API delivery:
+  - `sendMessage` HTTP path is now used for `channels.telegram` sends.
+  - channel status now reflects live delivery connectivity and last API error surfaces.
+  - added test/proxy override support through `OPENCLAW_GO_TELEGRAM_API_BASE`.
+- Added gateway background Telegram runtime:
+  - long-poll loop via `getUpdates` starts automatically when bot token is configured.
+  - inbound slash command messages are routed through existing Telegram command handlers and delivered back to the originating chat.
+  - inbound plain-text messages are bridged through browser completion runtime and replies are posted back to Telegram.
+- Preserved non-Telegram channel behavior:
+  - existing generic multi-channel webhook/token-ready adapters remain unchanged and operational.
+- Added/expanded tests:
+  - `go-agent/internal/channels/registry_test.go` now validates real Telegram send semantics through mocked API.
+  - new `go-agent/internal/gateway/telegram_runtime_test.go` covers inbound command handling and inbound plain-text bridged replies.
+  - `go-agent/internal/gateway/server_test.go` updated to use mocked Telegram API in channel send integration flow.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ./internal/channels/telegram_driver.go ./internal/channels/registry_test.go ./internal/gateway/server.go ./internal/gateway/server_test.go ./internal/gateway/telegram_runtime.go ./internal/gateway/telegram_runtime_test.go`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`
