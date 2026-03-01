@@ -46,3 +46,20 @@ func TestCompleteRejectsWrongCode(t *testing.T) {
 		t.Fatalf("expected invalid code error")
 	}
 }
+
+func TestIsAuthorized(t *testing.T) {
+	m := NewManager(5 * time.Minute)
+	session := m.Start(StartOptions{})
+	if m.IsAuthorized(session.ID) {
+		t.Fatalf("pending session should not be authorized")
+	}
+	if _, err := m.Complete(session.ID, session.Code); err != nil {
+		t.Fatalf("complete failed: %v", err)
+	}
+	if !m.IsAuthorized(session.ID) {
+		t.Fatalf("completed session should be authorized")
+	}
+	if m.IsAuthorized("missing-session") {
+		t.Fatalf("missing session should not be authorized")
+	}
+}

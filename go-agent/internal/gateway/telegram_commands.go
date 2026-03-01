@@ -67,27 +67,49 @@ func (s *Server) handleTelegramCommand(job scheduler.Job, message string) (map[s
 
 func (s *Server) handleTelegramModelCommand(target string, args []string) (channels.SendReceipt, error) {
 	current := s.compat.getTelegramModel(target)
+	descriptors := s.compat.listModelDescriptors()
 	if len(args) == 0 || strings.EqualFold(args[0], "list") || strings.EqualFold(args[0], "status") {
 		available := s.compat.listModelIDs()
 		return telegramCommandReceipt(target, fmt.Sprintf("Current model: `%s`\nAvailable: %s", current, strings.Join(available, ", ")), map[string]any{
 			"type":            "model.status",
 			"currentModel":    current,
 			"availableModels": available,
+			"models":          descriptors,
 		}), nil
 	}
 
-	nextModel := strings.ToLower(strings.TrimSpace(args[0]))
-	if !s.compat.isKnownModel(nextModel) {
+	action := strings.ToLower(strings.TrimSpace(args[0]))
+	switch action {
+	case "next":
+		selected := s.compat.nextTelegramModel(target)
+		return telegramCommandReceipt(target, fmt.Sprintf("Model advanced to `%s` for `%s`.", selected, target), map[string]any{
+			"type":         "model.next",
+			"currentModel": selected,
+			"target":       target,
+		}), nil
+	case "reset":
+		selected := s.compat.setTelegramModel(target, "gpt-5.2")
+		return telegramCommandReceipt(target, fmt.Sprintf("Model reset to `%s` for `%s`.", selected, target), map[string]any{
+			"type":         "model.reset",
+			"currentModel": selected,
+			"target":       target,
+		}), nil
+	}
+
+	resolvedModel, aliasUsed, ok := s.compat.resolveModelChoice(action)
+	if !ok {
 		available := s.compat.listModelIDs()
-		return telegramCommandReceipt(target, fmt.Sprintf("Unknown model `%s`. Available: %s", nextModel, strings.Join(available, ", ")), map[string]any{
+		return telegramCommandReceipt(target, fmt.Sprintf("Unknown model `%s`. Available: %s", action, strings.Join(available, ", ")), map[string]any{
 			"type":            "model.invalid",
-			"requestedModel":  nextModel,
+			"requestedModel":  action,
 			"availableModels": available,
 		}), nil
 	}
-	selected := s.compat.setTelegramModel(target, nextModel)
+	selected := s.compat.setTelegramModel(target, resolvedModel)
 	return telegramCommandReceipt(target, fmt.Sprintf("Model set to `%s` for `%s`.", selected, target), map[string]any{
 		"type":         "model.set",
+		"requested":    action,
+		"aliasUsed":    aliasUsed,
 		"currentModel": selected,
 		"target":       target,
 	}), nil
@@ -101,20 +123,37 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 
 	switch action {
 	case "start":
+		if existingID := s.compat.getTelegramAuth(target); existingID != "" {
+			if existing, ok := s.webLogin.Get(existingID); ok && existing.Status == webbridge.LoginPending {
+				return telegramCommandReceipt(target, fmt.Sprintf("Auth already pending.\nOpen: %s\nThen run: `/auth complete %s`", existing.VerificationURIComplete, existing.Code), map[string]any{
+					"type":                    "auth.start",
+					"target":                  target,
+					"loginSessionId":          existing.ID,
+					"code":                    existing.Code,
+					"status":                  existing.Status,
+					"verificationUri":         existing.VerificationURI,
+					"verificationUriComplete": existing.VerificationURIComplete,
+					"expiresAt":               existing.ExpiresAt,
+				}), nil
+			}
+		}
+
 		model := s.compat.getTelegramModel(target)
 		login := s.webLogin.Start(webbridge.StartOptions{
 			Provider: "chatgpt",
 			Model:    model,
 		})
 		s.compat.setTelegramAuth(target, login.ID)
-		return telegramCommandReceipt(target, fmt.Sprintf("Auth started.\nOpen: %s\nThen run: `/auth complete %s`", login.VerificationURI, login.Code), map[string]any{
-			"type":            "auth.start",
-			"target":          target,
-			"loginSessionId":  login.ID,
-			"code":            login.Code,
-			"verificationUri": login.VerificationURI,
-			"model":           model,
-			"status":          login.Status,
+		return telegramCommandReceipt(target, fmt.Sprintf("Auth started.\nOpen: %s\nIf prompted, use code `%s`.\nThen run: `/auth complete %s`", login.VerificationURIComplete, login.Code, login.Code), map[string]any{
+			"type":                    "auth.start",
+			"target":                  target,
+			"loginSessionId":          login.ID,
+			"code":                    login.Code,
+			"verificationUri":         login.VerificationURI,
+			"verificationUriComplete": login.VerificationURIComplete,
+			"expiresAt":               login.ExpiresAt,
+			"model":                   model,
+			"status":                  login.Status,
 		}), nil
 	case "status":
 		loginID := s.compat.getTelegramAuth(target)
@@ -134,25 +173,68 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 				"loginSessionId": loginID,
 			}), nil
 		}
-		return telegramCommandReceipt(target, fmt.Sprintf("Auth status: `%s` (session `%s`).", login.Status, login.ID), map[string]any{
-			"type":   "auth.status",
-			"target": target,
-			"login":  login,
+		expiresInSec := authExpiresInSeconds(login.ExpiresAt)
+		message := fmt.Sprintf("Auth status: `%s` (session `%s`).", login.Status, login.ID)
+		if login.Status == webbridge.LoginPending {
+			message += fmt.Sprintf("\nOpen: %s", login.VerificationURIComplete)
+			message += fmt.Sprintf("\nThen run: `/auth complete %s`", login.Code)
+		}
+		return telegramCommandReceipt(target, message, map[string]any{
+			"type":             "auth.status",
+			"target":           target,
+			"login":            login,
+			"expiresInSeconds": expiresInSec,
 		}), nil
-	case "complete":
-		if len(args) < 2 {
-			return telegramCommandReceipt(target, "Missing code. Usage: `/auth complete <CODE>`", map[string]any{
-				"type":   "auth.complete",
+	case "url":
+		loginID := s.compat.getTelegramAuth(target)
+		if loginID == "" {
+			return telegramCommandReceipt(target, "No active auth flow. Run `/auth` first.", map[string]any{
+				"type":   "auth.url",
 				"target": target,
-				"error":  "missing_code",
+				"status": "none",
 			}), nil
 		}
+		login, ok := s.webLogin.Get(loginID)
+		if !ok {
+			s.compat.setTelegramAuth(target, "")
+			return telegramCommandReceipt(target, "Auth session expired or missing. Run `/auth` again.", map[string]any{
+				"type":           "auth.url",
+				"target":         target,
+				"status":         "missing",
+				"loginSessionId": loginID,
+			}), nil
+		}
+		return telegramCommandReceipt(target, fmt.Sprintf("Auth URL: %s\nCode: `%s`", login.VerificationURIComplete, login.Code), map[string]any{
+			"type":                    "auth.url",
+			"target":                  target,
+			"loginSessionId":          login.ID,
+			"verificationUri":         login.VerificationURI,
+			"verificationUriComplete": login.VerificationURIComplete,
+			"code":                    login.Code,
+			"status":                  login.Status,
+		}), nil
+	case "complete":
 		loginID := s.compat.getTelegramAuth(target)
 		if loginID == "" {
 			return telegramCommandReceipt(target, "No pending auth session. Run `/auth` first.", map[string]any{
 				"type":   "auth.complete",
 				"target": target,
 				"error":  "missing_session",
+			}), nil
+		}
+
+		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+			if login, ok := s.webLogin.Get(loginID); ok && login.Status == webbridge.LoginAuthorized {
+				return telegramCommandReceipt(target, fmt.Sprintf("Auth already completed. Session `%s` is `%s`.", login.ID, login.Status), map[string]any{
+					"type":   "auth.complete",
+					"target": target,
+					"login":  login,
+				}), nil
+			}
+			return telegramCommandReceipt(target, "Missing code. Usage: `/auth complete <CODE>`", map[string]any{
+				"type":   "auth.complete",
+				"target": target,
+				"error":  "missing_code",
 			}), nil
 		}
 		code := strings.TrimSpace(args[1])
@@ -170,8 +252,25 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 			"target": target,
 			"login":  login,
 		}), nil
+	case "cancel", "logout":
+		loginID := s.compat.getTelegramAuth(target)
+		if loginID == "" {
+			return telegramCommandReceipt(target, "No active auth session for this target.", map[string]any{
+				"type":   "auth.cancel",
+				"target": target,
+				"status": "none",
+			}), nil
+		}
+		revoked := s.webLogin.Logout(loginID)
+		s.compat.setTelegramAuth(target, "")
+		return telegramCommandReceipt(target, fmt.Sprintf("Auth session `%s` cancelled.", loginID), map[string]any{
+			"type":           "auth.cancel",
+			"target":         target,
+			"loginSessionId": loginID,
+			"revoked":        revoked,
+		}), nil
 	default:
-		return telegramCommandReceipt(target, "Unknown `/auth` action. Use `/auth`, `/auth status`, or `/auth complete <CODE>`.", map[string]any{
+		return telegramCommandReceipt(target, "Unknown `/auth` action. Use `/auth`, `/auth status`, `/auth url`, `/auth complete <CODE>`, or `/auth cancel`.", map[string]any{
 			"type":   "auth.invalid",
 			"target": target,
 			"action": action,
@@ -293,4 +392,16 @@ func telegramCommandReceipt(target string, message string, metadata map[string]a
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 		Metadata:  metadata,
 	}
+}
+
+func authExpiresInSeconds(expiresAt string) int {
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(expiresAt))
+	if err != nil {
+		return 0
+	}
+	remaining := time.Until(parsed).Seconds()
+	if remaining <= 0 {
+		return 0
+	}
+	return int(remaining)
 }

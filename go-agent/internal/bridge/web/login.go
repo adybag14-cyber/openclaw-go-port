@@ -215,6 +215,14 @@ func (m *Manager) HasAuthorizedSession() bool {
 	return false
 }
 
+func (m *Manager) IsAuthorized(id string) bool {
+	session, ok := m.Get(id)
+	if !ok {
+		return false
+	}
+	return session.Status == LoginAuthorized
+}
+
 func (m *Manager) applyExpiry(session Session) Session {
 	if session.Status != LoginPending {
 		return session

@@ -91,6 +91,7 @@ func newCompatState() *compatState {
 				"mode":       "auto",
 				"provider":   "chatgpt",
 				"capability": "general",
+				"aliases":    []string{"auto", "default"},
 			},
 			{
 				"id":         "gpt-5.2-thinking",
@@ -98,6 +99,7 @@ func newCompatState() *compatState {
 				"mode":       "thinking",
 				"provider":   "chatgpt",
 				"capability": "reasoning",
+				"aliases":    []string{"thinking", "extended", "extended-thinking"},
 			},
 			{
 				"id":         "gpt-5.2-pro",
@@ -105,6 +107,7 @@ func newCompatState() *compatState {
 				"mode":       "pro",
 				"provider":   "chatgpt",
 				"capability": "research",
+				"aliases":    []string{"pro", "extended-pro"},
 			},
 			{
 				"id":         "gpt-5.1-mini",
@@ -112,6 +115,7 @@ func newCompatState() *compatState {
 				"mode":       "instant",
 				"provider":   "chatgpt",
 				"capability": "fast-response",
+				"aliases":    []string{"instant", "mini", "fast"},
 			},
 		},
 		telegramModelByTarget: map[string]string{},
@@ -156,19 +160,96 @@ func (c *compatState) listModelIDs() []string {
 	return out
 }
 
-func (c *compatState) isKnownModel(model string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(model))
-	if normalized == "" {
-		return false
-	}
+func (c *compatState) listModelDescriptors() []map[string]any {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	items := make([]map[string]any, 0, len(c.models))
 	for _, item := range c.models {
-		if strings.EqualFold(toString(item["id"], ""), normalized) {
-			return true
+		items = append(items, cloneMap(item))
+	}
+	return items
+}
+
+func normalizeModelAlias(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	replacer := strings.NewReplacer("_", "-", ".", "-", " ", "-", "/", "-")
+	return replacer.Replace(normalized)
+}
+
+func (c *compatState) resolveModelChoice(model string) (string, string, bool) {
+	normalized := normalizeModelAlias(model)
+	if normalized == "" {
+		return "", "", false
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	for _, item := range c.models {
+		modelID := strings.ToLower(strings.TrimSpace(toString(item["id"], "")))
+		if modelID == normalized {
+			return modelID, "", true
 		}
 	}
-	return false
+
+	aliasMap := map[string]string{
+		"auto":              "gpt-5.2",
+		"default":           "gpt-5.2",
+		"gpt5-2":            "gpt-5.2",
+		"gpt-5-2":           "gpt-5.2",
+		"instant":           "gpt-5.1-mini",
+		"fast":              "gpt-5.1-mini",
+		"mini":              "gpt-5.1-mini",
+		"thinking":          "gpt-5.2-thinking",
+		"extended":          "gpt-5.2-thinking",
+		"extended-thinking": "gpt-5.2-thinking",
+		"reasoning":         "gpt-5.2-thinking",
+		"pro":               "gpt-5.2-pro",
+		"extended-pro":      "gpt-5.2-pro",
+		"research":          "gpt-5.2-pro",
+	}
+	if mapped, ok := aliasMap[normalized]; ok {
+		return mapped, normalized, true
+	}
+
+	for _, item := range c.models {
+		modelID := strings.ToLower(strings.TrimSpace(toString(item["id"], "")))
+		mode := normalizeModelAlias(toString(item["mode"], ""))
+		if mode != "" && mode == normalized {
+			return modelID, normalized, true
+		}
+		name := normalizeModelAlias(toString(item["name"], ""))
+		if name != "" && name == normalized {
+			return modelID, normalized, true
+		}
+	}
+
+	return "", "", false
+}
+
+func (c *compatState) isKnownModel(model string) bool {
+	_, _, ok := c.resolveModelChoice(model)
+	return ok
+}
+
+func (c *compatState) nextTelegramModel(target string) string {
+	current := c.getTelegramModel(target)
+	models := c.listModelIDs()
+	if len(models) == 0 {
+		return c.setTelegramModel(target, "gpt-5.2")
+	}
+	currentIndex := -1
+	for idx, model := range models {
+		if strings.EqualFold(model, current) {
+			currentIndex = idx
+			break
+		}
+	}
+	nextIndex := 0
+	if currentIndex >= 0 {
+		nextIndex = (currentIndex + 1) % len(models)
+	}
+	return c.setTelegramModel(target, models[nextIndex])
 }
 
 func (c *compatState) getTelegramModel(target string) string {
@@ -207,6 +288,67 @@ func (c *compatState) setTelegramAuth(target string, loginID string) {
 	c.mu.Lock()
 	c.telegramAuthByTarget[targetKey] = strings.TrimSpace(loginID)
 	c.mu.Unlock()
+}
+
+func (c *compatState) edgeTopologySnapshot() map[string]any {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	nodeCount := len(c.nodes)
+	onlineNodes := 0
+	for _, node := range c.nodes {
+		if strings.EqualFold(toString(node["status"], ""), "online") {
+			onlineNodes++
+		}
+	}
+
+	approvedPairs := 0
+	pendingPairs := 0
+	rejectedPairs := 0
+	approvedPeers := map[string]struct{}{}
+	for _, pair := range c.nodePairs {
+		status := strings.ToLower(toString(pair["status"], "pending"))
+		nodeID := strings.ToLower(strings.TrimSpace(toString(pair["nodeId"], "")))
+		switch status {
+		case "approved":
+			approvedPairs++
+			if nodeID != "" && nodeID != "node-local" {
+				approvedPeers[nodeID] = struct{}{}
+			}
+		case "rejected", "denied":
+			rejectedPairs++
+		default:
+			pendingPairs++
+		}
+	}
+
+	pendingApprovals := 0
+	approvedApprovals := 0
+	rejectedApprovals := 0
+	for _, approval := range c.pendingApprovals {
+		status := strings.ToLower(toString(approval["status"], "pending"))
+		switch status {
+		case "approved":
+			approvedApprovals++
+		case "rejected":
+			rejectedApprovals++
+		default:
+			pendingApprovals++
+		}
+	}
+
+	return map[string]any{
+		"nodes":             nodeCount,
+		"onlineNodes":       onlineNodes,
+		"approvedPairs":     approvedPairs,
+		"pendingPairs":      pendingPairs,
+		"rejectedPairs":     rejectedPairs,
+		"approvedPeers":     len(approvedPeers),
+		"pendingApprovals":  pendingApprovals,
+		"approvedApprovals": approvedApprovals,
+		"rejectedApprovals": rejectedApprovals,
+		"nodeEvents":        len(c.nodeEvents),
+	}
 }
 
 func (c *compatState) mergeConfig(params map[string]any) map[string]any {

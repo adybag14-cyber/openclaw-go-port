@@ -10,6 +10,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	stdruntime "runtime"
 	"strings"
 	"time"
 
@@ -560,10 +561,23 @@ func (s *Server) handleOAuthLogout(params map[string]any) map[string]any {
 }
 
 func (s *Server) enqueueRuntimeRequest(requestID string, canonical string, params map[string]any) (map[string]any, *dispatchError) {
-	if (canonical == "browser.request" || canonical == "browser.open") && !s.webLogin.HasAuthorizedSession() {
-		return nil, &dispatchError{
-			Code:    -32040,
-			Message: "browser bridge requires active authorized login session",
+	if canonical == "browser.request" || canonical == "browser.open" {
+		loginID := strings.TrimSpace(toString(params["loginSessionId"], ""))
+		if loginID != "" {
+			if !s.webLogin.IsAuthorized(loginID) {
+				return nil, &dispatchError{
+					Code:    -32040,
+					Message: "browser bridge requires specified loginSessionId to be authorized",
+					Details: map[string]any{
+						"loginSessionId": loginID,
+					},
+				}
+			}
+		} else if !s.webLogin.HasAuthorizedSession() {
+			return nil, &dispatchError{
+				Code:    -32040,
+				Message: "browser bridge requires active authorized login session",
+			}
 		}
 	}
 
@@ -719,13 +733,54 @@ func (s *Server) handleEdgeRouterPlan(params map[string]any) map[string]any {
 }
 
 func (s *Server) handleEdgeAccelerationStatus() map[string]any {
+	cpuCores := stdruntime.NumCPU()
+	gpuAvailable := envTruthy("OPENCLAW_GO_GPU_AVAILABLE") || envTruthy("OPENCLAW_GO_ACCEL_GPU")
+	tpuAvailable := envTruthy("OPENCLAW_GO_TPU_AVAILABLE") || envTruthy("OPENCLAW_GO_ACCEL_TPU")
+
+	mode := strings.ToLower(normalizeOptionalText(os.Getenv("OPENCLAW_GO_ACCEL_MODE"), 48))
+	if mode == "" {
+		switch {
+		case gpuAvailable && tpuAvailable:
+			mode = "heterogeneous"
+		case gpuAvailable:
+			mode = "gpu-hybrid"
+		case tpuAvailable:
+			mode = "tpu-hybrid"
+		default:
+			mode = "cpu"
+		}
+	}
+
+	throughputClass := "standard"
+	if cpuCores <= 2 && !gpuAvailable && !tpuAvailable {
+		throughputClass = "low"
+	} else if cpuCores >= 8 || gpuAvailable || tpuAvailable {
+		throughputClass = "high"
+	}
+
+	features := []string{
+		"request-batching",
+		"cache-warmup",
+		"prefetch-routing",
+	}
+	capabilities := []string{"cpu"}
+	if gpuAvailable {
+		features = append(features, "gpu-offload")
+		capabilities = append(capabilities, "gpu")
+	}
+	if tpuAvailable {
+		features = append(features, "tpu-offload")
+		capabilities = append(capabilities, "tpu")
+	}
+
 	return map[string]any{
-		"enabled": true,
-		"features": []string{
-			"request-batching",
-			"cache-warmup",
-			"prefetch-routing",
-		},
+		"enabled":         true,
+		"mode":            mode,
+		"cpuCores":        cpuCores,
+		"features":        features,
+		"capabilities":    capabilities,
+		"throughputClass": throughputClass,
+		"runtimeProfile":  runtimeProfileName(s.cfg.Runtime.Profile),
 	}
 }
 
@@ -875,10 +930,27 @@ func (s *Server) handleEdgeEnclaveProve(params map[string]any) map[string]any {
 }
 
 func (s *Server) handleEdgeMeshStatus() map[string]any {
+	topology := s.compat.edgeTopologySnapshot()
+	approvedPairs := toInt(topology["approvedPairs"], 0)
+	approvedPeers := toInt(topology["approvedPeers"], 0)
+	onlineNodes := toInt(topology["onlineNodes"], 0)
+
+	mode := "single-node-bridge"
+	switch {
+	case approvedPeers >= 3:
+		mode = "mesh"
+	case approvedPeers >= 1:
+		mode = "multi-node-bridge"
+	case onlineNodes > 1:
+		mode = "cluster-preview"
+	}
+	connected := onlineNodes > 0 || approvedPairs > 0
+
 	return map[string]any{
-		"connected": true,
-		"peers":     1,
-		"mode":      "single-node-bridge",
+		"connected": connected,
+		"peers":     approvedPeers,
+		"mode":      mode,
+		"topology":  topology,
 	}
 }
 
@@ -942,9 +1014,69 @@ func (s *Server) handleEdgeFinetuneRun(ctx context.Context, params map[string]an
 }
 
 func (s *Server) handleEdgeIdentityTrustStatus() map[string]any {
+	topology := s.compat.edgeTopologySnapshot()
+	pendingApprovals := toInt(topology["pendingApprovals"], 0)
+	rejectedApprovals := toInt(topology["rejectedApprovals"], 0)
+	pendingPairs := toInt(topology["pendingPairs"], 0)
+	rejectedPairs := toInt(topology["rejectedPairs"], 0)
+
+	guardSnapshot := s.guard.Snapshot()
+	loopGuard := asMap(guardSnapshot["loopGuard"])
+	loopGuardEnabled := toBool(loopGuard["enabled"], true)
+
+	score := 0.98
+	score -= float64(pendingApprovals) * 0.03
+	score -= float64(rejectedApprovals) * 0.06
+	score -= float64(pendingPairs) * 0.015
+	score -= float64(rejectedPairs) * 0.04
+	if !loopGuardEnabled {
+		score -= 0.08
+	}
+	if score < 0 {
+		score = 0
+	}
+	if score > 1 {
+		score = 1
+	}
+
+	signals := make([]string, 0, 6)
+	if pendingApprovals > 0 {
+		signals = append(signals, fmt.Sprintf("pending_approvals:%d", pendingApprovals))
+	}
+	if rejectedApprovals > 0 {
+		signals = append(signals, fmt.Sprintf("rejected_approvals:%d", rejectedApprovals))
+	}
+	if pendingPairs > 0 {
+		signals = append(signals, fmt.Sprintf("pending_pairs:%d", pendingPairs))
+	}
+	if rejectedPairs > 0 {
+		signals = append(signals, fmt.Sprintf("rejected_pairs:%d", rejectedPairs))
+	}
+	if !loopGuardEnabled {
+		signals = append(signals, "loop_guard:disabled")
+	}
+	if len(signals) == 0 {
+		signals = append(signals, "steady_state")
+	}
+
+	status := "trusted"
+	switch {
+	case score < 0.75:
+		status = "restricted"
+	case score < 0.90:
+		status = "review"
+	}
+
 	return map[string]any{
-		"status": "trusted",
-		"score":  0.97,
+		"status":              status,
+		"score":               score,
+		"signals":             signals,
+		"pendingApprovals":    pendingApprovals,
+		"rejectedApprovals":   rejectedApprovals,
+		"pendingPairs":        pendingPairs,
+		"rejectedPairs":       rejectedPairs,
+		"riskReviewThreshold": toInt(guardSnapshot["riskReviewThreshold"], 70),
+		"riskBlockThreshold":  toInt(guardSnapshot["riskBlockThreshold"], 90),
 	}
 }
 
@@ -994,14 +1126,39 @@ func (s *Server) handleEdgeFinetuneClusterPlan(params map[string]any) map[string
 }
 
 func (s *Server) handleEdgeAlignmentEvaluate(params map[string]any) map[string]any {
-	input := toString(params["input"], "")
-	score := 0.92
-	if strings.TrimSpace(input) == "" {
-		score = 0.75
+	input := normalizeOptionalText(toString(params["input"], ""), 8_000)
+	evalParams := map[string]any{
+		"message": input,
 	}
+	if tags, ok := params["telemetryTags"]; ok {
+		evalParams["telemetryTags"] = tags
+	}
+
+	decision := s.guard.Evaluate("edge.alignment.evaluate", evalParams)
+	score := float64(100-decision.RiskScore) / 100
+	if score < 0 {
+		score = 0
+	}
+	if score > 1 {
+		score = 1
+	}
+
+	status := "pass"
+	switch decision.Action {
+	case security.ActionBlock:
+		status = "fail"
+	case security.ActionReview:
+		status = "review"
+	}
+
 	return map[string]any{
-		"score":  score,
-		"status": "pass",
+		"score":      score,
+		"status":     status,
+		"riskScore":  decision.RiskScore,
+		"action":     decision.Action,
+		"reason":     decision.Reason,
+		"signals":    decision.Signals,
+		"inputEmpty": strings.TrimSpace(input) == "",
 	}
 }
 
