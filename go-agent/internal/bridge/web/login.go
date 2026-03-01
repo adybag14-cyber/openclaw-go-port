@@ -74,6 +74,7 @@ func (m *Manager) Start(opts StartOptions) Session {
 	expires := now.Add(m.ttl)
 	id := fmt.Sprintf("web-login-%06d", seq)
 	code := fmt.Sprintf("OC-%06d", 100000+seq%900000)
+	verificationURI := providerVerificationURI(provider)
 
 	session := Session{
 		ID:                      id,
@@ -81,8 +82,8 @@ func (m *Manager) Start(opts StartOptions) Session {
 		Provider:                provider,
 		Model:                   model,
 		Code:                    code,
-		VerificationURI:         "https://chatgpt.com/",
-		VerificationURIComplete: fmt.Sprintf("https://chatgpt.com/?openclaw_code=%s", code),
+		VerificationURI:         verificationURI,
+		VerificationURIComplete: fmt.Sprintf("%s?openclaw_code=%s", strings.TrimRight(verificationURI, "/"), code),
 		CreatedAt:               now.Format(time.RFC3339),
 		ExpiresAt:               expires.Format(time.RFC3339),
 	}
@@ -235,4 +236,19 @@ func (m *Manager) applyExpiry(session Session) Session {
 		session.Status = LoginExpired
 	}
 	return session
+}
+
+func providerVerificationURI(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openrouter":
+		return "https://openrouter.ai/"
+	case "kimi":
+		return "https://kimi.com/"
+	case "qwen":
+		return "https://chat.qwen.ai/"
+	case "chatgpt", "codex", "openai":
+		fallthrough
+	default:
+		return "https://chatgpt.com/"
+	}
 }

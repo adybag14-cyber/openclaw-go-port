@@ -396,18 +396,26 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 	if len(args) > 0 {
 		action = strings.ToLower(strings.TrimSpace(args[0]))
 	}
+	actionArgs := []string{}
+	if len(args) > 1 {
+		actionArgs = args[1:]
+	}
+	defaultProvider, defaultModel := s.compat.getTelegramModelSelection(target)
+	defaultProvider = normalizeAuthProviderOrFallback(defaultProvider, "chatgpt")
 
 	switch action {
 	case "help":
 		return telegramCommandReceipt(target, strings.Join([]string{
 			"Auth command usage:",
 			"`/auth providers`",
-			"`/auth status`",
+			"`/auth status [provider] [account] [session_id]`",
 			"`/auth bridge`",
-			"`/auth` (start)",
-			"`/auth wait [session_id] [--timeout <seconds>]`",
-			"`/auth complete <CODE> [session_id]`",
-			"`/auth cancel`",
+			"`/auth` (start default provider)",
+			"`/auth start <provider> [account] [--force]`",
+			"`/auth wait <provider> [session_id] [account] [--timeout <seconds>]`",
+			"`/auth complete <provider> <callback_url_or_code> [session_id] [account]`",
+			"`/auth complete <code> [session_id]`",
+			"`/auth cancel [provider] [account] [session_id]`",
 		}, "\n"), map[string]any{
 			"type":   "auth.help",
 			"target": target,
@@ -427,9 +435,22 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 			"providers": providers,
 		}), nil
 	case "start":
-		if existingID := s.compat.getTelegramAuth(target); existingID != "" {
+		scope, parseErr := parseAuthStartScope(actionArgs, defaultProvider)
+		if parseErr != "" {
+			return telegramCommandReceipt(target, parseErr, map[string]any{
+				"type":   "auth.start",
+				"target": target,
+				"error":  "invalid_start_args",
+			}), nil
+		}
+
+		if existingID := s.compat.getTelegramAuthScoped(target, scope.Provider, scope.Account); existingID != "" && !scope.Force {
 			if existing, ok := s.webLogin.Get(existingID); ok && existing.Status == webbridge.LoginPending {
-				return telegramCommandReceipt(target, fmt.Sprintf("Auth already pending.\nOpen: %s\nThen run: `/auth complete %s`", existing.VerificationURIComplete, existing.Code), map[string]any{
+				accountLabel := scope.Account
+				if accountLabel == "" {
+					accountLabel = "default"
+				}
+				return telegramCommandReceipt(target, fmt.Sprintf("Auth already pending for `%s` account `%s`.\nOpen: %s\nThen run: `/auth complete %s %s`", scope.Provider, accountLabel, existing.VerificationURIComplete, scope.Provider, existing.Code), map[string]any{
 					"type":                    "auth.start",
 					"target":                  target,
 					"loginSessionId":          existing.ID,
@@ -438,17 +459,34 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 					"verificationUri":         existing.VerificationURI,
 					"verificationUriComplete": existing.VerificationURIComplete,
 					"expiresAt":               existing.ExpiresAt,
+					"provider":                scope.Provider,
+					"account":                 scope.Account,
+					"resolvedScope":           authScopeLabel(scope.Provider, scope.Account),
 				}), nil
 			}
 		}
 
-		modelProvider, model := s.compat.getTelegramModelSelection(target)
+		model := defaultModel
+		if strings.TrimSpace(model) == "" {
+			model = "gpt-5.2"
+		}
+		if !strings.EqualFold(scope.Provider, defaultProvider) {
+			if providerDefaultModel, ok := s.compat.defaultModelForProvider(scope.Provider); ok {
+				model = providerDefaultModel
+			}
+		}
+
 		login := s.webLogin.Start(webbridge.StartOptions{
-			Provider: modelProvider,
+			Provider: scope.Provider,
 			Model:    model,
 		})
-		s.compat.setTelegramAuth(target, login.ID)
-		return telegramCommandReceipt(target, fmt.Sprintf("Auth started.\nOpen: %s\nIf prompted, use code `%s`.\nThen run: `/auth complete %s`", login.VerificationURIComplete, login.Code, login.Code), map[string]any{
+		s.compat.setTelegramAuthScoped(target, scope.Provider, scope.Account, login.ID)
+
+		message := fmt.Sprintf("Auth started for `%s`.\nOpen: %s\nIf prompted, use code `%s`.\nThen run: `/auth complete %s %s`", scope.Provider, login.VerificationURIComplete, login.Code, scope.Provider, login.Code)
+		if scope.Account != "" {
+			message = fmt.Sprintf("Auth started for `%s` account `%s`.\nOpen: %s\nIf prompted, use code `%s`.\nThen run: `/auth complete %s %s %s`", scope.Provider, scope.Account, login.VerificationURIComplete, login.Code, scope.Provider, login.Code, scope.Account)
+		}
+		return telegramCommandReceipt(target, message, map[string]any{
 			"type":                    "auth.start",
 			"target":                  target,
 			"loginSessionId":          login.ID,
@@ -456,57 +494,94 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 			"verificationUri":         login.VerificationURI,
 			"verificationUriComplete": login.VerificationURIComplete,
 			"expiresAt":               login.ExpiresAt,
-			"provider":                modelProvider,
+			"provider":                scope.Provider,
+			"account":                 scope.Account,
+			"resolvedScope":           authScopeLabel(scope.Provider, scope.Account),
 			"model":                   model,
 			"status":                  login.Status,
+			"force":                   scope.Force,
 		}), nil
 	case "status":
-		loginID := s.compat.getTelegramAuth(target)
+		scope, parseErr := parseAuthStatusScope(actionArgs, defaultProvider)
+		if parseErr != "" {
+			return telegramCommandReceipt(target, parseErr, map[string]any{
+				"type":   "auth.status",
+				"target": target,
+				"error":  "invalid_status_args",
+			}), nil
+		}
+		loginID := strings.TrimSpace(scope.SessionID)
 		if loginID == "" {
-			return telegramCommandReceipt(target, "No active auth flow for this Telegram target.", map[string]any{
+			loginID = s.compat.getTelegramAuthScoped(target, scope.Provider, scope.Account)
+		}
+		if loginID == "" {
+			return telegramCommandReceipt(target, fmt.Sprintf("No active auth flow for `%s` in scope `%s`.", target, authScopeLabel(scope.Provider, scope.Account)), map[string]any{
 				"type":   "auth.status",
 				"target": target,
 				"status": "none",
+				"scope":  authScopeLabel(scope.Provider, scope.Account),
 			}), nil
 		}
 		login, ok := s.webLogin.Get(loginID)
 		if !ok {
-			return telegramCommandReceipt(target, "Auth session expired or missing. Run `/auth` again.", map[string]any{
+			return telegramCommandReceipt(target, "Auth session expired or missing. Run `/auth start <provider>` again.", map[string]any{
 				"type":           "auth.status",
 				"target":         target,
 				"status":         "missing",
 				"loginSessionId": loginID,
+				"provider":       scope.Provider,
+				"account":        scope.Account,
+				"scope":          authScopeLabel(scope.Provider, scope.Account),
 			}), nil
 		}
 		expiresInSec := authExpiresInSeconds(login.ExpiresAt)
 		message := fmt.Sprintf("Auth status: `%s` (session `%s`).", login.Status, login.ID)
 		if login.Status == webbridge.LoginPending {
 			message += fmt.Sprintf("\nOpen: %s", login.VerificationURIComplete)
-			message += fmt.Sprintf("\nThen run: `/auth complete %s`", login.Code)
+			message += fmt.Sprintf("\nThen run: `/auth complete %s %s`", login.Provider, login.Code)
 		}
 		return telegramCommandReceipt(target, message, map[string]any{
 			"type":             "auth.status",
 			"target":           target,
 			"login":            login,
 			"expiresInSeconds": expiresInSec,
+			"provider":         normalizeAuthProviderOrFallback(toString(login.Provider, scope.Provider), scope.Provider),
+			"account":          scope.Account,
+			"scope":            authScopeLabel(scope.Provider, scope.Account),
 		}), nil
 	case "wait":
-		defaultLoginID := s.compat.getTelegramAuth(target)
-		loginID, waitTimeout, waitParseErr := parseAuthWaitArgs(args[1:], defaultLoginID)
-		if waitParseErr != "" {
-			return telegramCommandReceipt(target, waitParseErr, map[string]any{
+		scope, parseErr := parseAuthWaitScope(actionArgs, defaultProvider)
+		if parseErr != "" {
+			return telegramCommandReceipt(target, parseErr, map[string]any{
 				"type":   "auth.wait",
 				"target": target,
 				"error":  "invalid_wait_args",
 			}), nil
 		}
-		login, err := s.webLogin.Wait(context.Background(), loginID, waitTimeout)
+		loginID := strings.TrimSpace(scope.SessionID)
+		if loginID == "" {
+			loginID = s.compat.getTelegramAuthScoped(target, scope.Provider, scope.Account)
+		}
+		if loginID == "" {
+			return telegramCommandReceipt(target, fmt.Sprintf("No auth session selected for scope `%s`. Start with `/auth start %s`.", authScopeLabel(scope.Provider, scope.Account), scope.Provider), map[string]any{
+				"type":     "auth.wait",
+				"target":   target,
+				"provider": scope.Provider,
+				"account":  scope.Account,
+				"scope":    authScopeLabel(scope.Provider, scope.Account),
+				"error":    "missing_session",
+			}), nil
+		}
+		login, err := s.webLogin.Wait(context.Background(), loginID, scope.Timeout)
 		if err != nil {
 			return telegramCommandReceipt(target, fmt.Sprintf("Auth wait failed: %s", err.Error()), map[string]any{
 				"type":           "auth.wait",
 				"target":         target,
 				"loginSessionId": loginID,
-				"timeoutSeconds": int(waitTimeout.Seconds()),
+				"timeoutSeconds": int(scope.Timeout.Seconds()),
+				"provider":       scope.Provider,
+				"account":        scope.Account,
+				"scope":          authScopeLabel(scope.Provider, scope.Account),
 				"error":          err.Error(),
 			}), nil
 		}
@@ -515,7 +590,10 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 			"target":           target,
 			"login":            login,
 			"expiresInSeconds": authExpiresInSeconds(login.ExpiresAt),
-			"timeoutSeconds":   int(waitTimeout.Seconds()),
+			"timeoutSeconds":   int(scope.Timeout.Seconds()),
+			"provider":         normalizeAuthProviderOrFallback(toString(login.Provider, scope.Provider), scope.Provider),
+			"account":          scope.Account,
+			"scope":            authScopeLabel(scope.Provider, scope.Account),
 		}), nil
 	case "bridge":
 		bridgeStatus := probeBrowserBridge(s.cfg.Runtime.BrowserBridge.Enabled, s.cfg.Runtime.BrowserBridge.Endpoint, 2*time.Second)
@@ -529,22 +607,37 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 			"bridge": bridgeStatus,
 		}), nil
 	case "url":
-		loginID := s.compat.getTelegramAuth(target)
+		scope, parseErr := parseAuthStatusScope(actionArgs, defaultProvider)
+		if parseErr != "" {
+			return telegramCommandReceipt(target, parseErr, map[string]any{
+				"type":   "auth.url",
+				"target": target,
+				"error":  "invalid_url_args",
+			}), nil
+		}
+		loginID := strings.TrimSpace(scope.SessionID)
 		if loginID == "" {
-			return telegramCommandReceipt(target, "No active auth flow. Run `/auth` first.", map[string]any{
+			loginID = s.compat.getTelegramAuthScoped(target, scope.Provider, scope.Account)
+		}
+		if loginID == "" {
+			return telegramCommandReceipt(target, "No active auth flow. Run `/auth start <provider>` first.", map[string]any{
 				"type":   "auth.url",
 				"target": target,
 				"status": "none",
+				"scope":  authScopeLabel(scope.Provider, scope.Account),
 			}), nil
 		}
 		login, ok := s.webLogin.Get(loginID)
 		if !ok {
-			s.compat.setTelegramAuth(target, "")
+			s.compat.setTelegramAuthScoped(target, scope.Provider, scope.Account, "")
 			return telegramCommandReceipt(target, "Auth session expired or missing. Run `/auth` again.", map[string]any{
 				"type":           "auth.url",
 				"target":         target,
 				"status":         "missing",
 				"loginSessionId": loginID,
+				"provider":       scope.Provider,
+				"account":        scope.Account,
+				"scope":          authScopeLabel(scope.Provider, scope.Account),
 			}), nil
 		}
 		return telegramCommandReceipt(target, fmt.Sprintf("Auth URL: %s\nCode: `%s`", login.VerificationURIComplete, login.Code), map[string]any{
@@ -555,65 +648,105 @@ func (s *Server) handleTelegramAuthCommand(target string, args []string) (channe
 			"verificationUriComplete": login.VerificationURIComplete,
 			"code":                    login.Code,
 			"status":                  login.Status,
+			"provider":                normalizeAuthProviderOrFallback(toString(login.Provider, scope.Provider), scope.Provider),
+			"account":                 scope.Account,
+			"scope":                   authScopeLabel(scope.Provider, scope.Account),
 		}), nil
 	case "complete":
-		loginID := s.compat.getTelegramAuth(target)
-		if len(args) >= 3 && strings.TrimSpace(args[2]) != "" {
-			loginID = strings.TrimSpace(args[2])
-		}
-		if loginID == "" {
-			return telegramCommandReceipt(target, "No pending auth session. Run `/auth` first.", map[string]any{
+		scope, parseErr := parseAuthCompleteScope(actionArgs, defaultProvider)
+		if parseErr != "" {
+			return telegramCommandReceipt(target, parseErr, map[string]any{
 				"type":   "auth.complete",
 				"target": target,
-				"error":  "missing_session",
+				"error":  "invalid_complete_args",
 			}), nil
 		}
 
-		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+		loginID := strings.TrimSpace(scope.SessionID)
+		if loginID == "" {
+			loginID = s.compat.getTelegramAuthScoped(target, scope.Provider, scope.Account)
+		}
+		if loginID == "" {
+			return telegramCommandReceipt(target, fmt.Sprintf("No pending auth session for scope `%s`. Run `/auth start %s` first.", authScopeLabel(scope.Provider, scope.Account), scope.Provider), map[string]any{
+				"type":   "auth.complete",
+				"target": target,
+				"error":  "missing_session",
+				"scope":  authScopeLabel(scope.Provider, scope.Account),
+			}), nil
+		}
+
+		code := extractAuthCode(scope.Code)
+		if strings.TrimSpace(code) == "" {
 			if login, ok := s.webLogin.Get(loginID); ok && login.Status == webbridge.LoginAuthorized {
 				return telegramCommandReceipt(target, fmt.Sprintf("Auth already completed. Session `%s` is `%s`.", login.ID, login.Status), map[string]any{
 					"type":   "auth.complete",
 					"target": target,
 					"login":  login,
+					"scope":  authScopeLabel(scope.Provider, scope.Account),
 				}), nil
 			}
-			return telegramCommandReceipt(target, "Missing code. Usage: `/auth complete <CODE>`", map[string]any{
+			return telegramCommandReceipt(target, "Missing code. Usage: `/auth complete <provider> <callback_url_or_code> [session_id] [account]`", map[string]any{
 				"type":   "auth.complete",
 				"target": target,
 				"error":  "missing_code",
+				"scope":  authScopeLabel(scope.Provider, scope.Account),
 			}), nil
 		}
-		code := extractAuthCode(args[1])
+
 		login, err := s.webLogin.Complete(loginID, code)
 		if err != nil {
 			return telegramCommandReceipt(target, fmt.Sprintf("Auth failed: %s", err.Error()), map[string]any{
 				"type":           "auth.complete",
 				"target":         target,
 				"loginSessionId": loginID,
+				"provider":       scope.Provider,
+				"account":        scope.Account,
+				"scope":          authScopeLabel(scope.Provider, scope.Account),
 				"error":          err.Error(),
 			}), nil
 		}
+		s.compat.setTelegramAuthScoped(target, scope.Provider, scope.Account, login.ID)
 		return telegramCommandReceipt(target, fmt.Sprintf("Auth completed. Session `%s` is `%s`.", login.ID, login.Status), map[string]any{
-			"type":   "auth.complete",
-			"target": target,
-			"login":  login,
+			"type":     "auth.complete",
+			"target":   target,
+			"login":    login,
+			"provider": normalizeAuthProviderOrFallback(toString(login.Provider, scope.Provider), scope.Provider),
+			"account":  scope.Account,
+			"scope":    authScopeLabel(scope.Provider, scope.Account),
 		}), nil
 	case "cancel", "logout":
-		loginID := s.compat.getTelegramAuth(target)
-		if loginID == "" {
-			return telegramCommandReceipt(target, "No active auth session for this target.", map[string]any{
+		scope, parseErr := parseAuthStatusScope(actionArgs, defaultProvider)
+		if parseErr != "" {
+			return telegramCommandReceipt(target, parseErr, map[string]any{
 				"type":   "auth.cancel",
 				"target": target,
-				"status": "none",
+				"error":  "invalid_cancel_args",
+			}), nil
+		}
+		loginID := strings.TrimSpace(scope.SessionID)
+		if loginID == "" {
+			loginID = s.compat.getTelegramAuthScoped(target, scope.Provider, scope.Account)
+		}
+		if loginID == "" {
+			return telegramCommandReceipt(target, "No active auth session for this target.", map[string]any{
+				"type":     "auth.cancel",
+				"target":   target,
+				"status":   "none",
+				"provider": scope.Provider,
+				"account":  scope.Account,
+				"scope":    authScopeLabel(scope.Provider, scope.Account),
 			}), nil
 		}
 		revoked := s.webLogin.Logout(loginID)
-		s.compat.setTelegramAuth(target, "")
+		s.compat.setTelegramAuthScoped(target, scope.Provider, scope.Account, "")
 		return telegramCommandReceipt(target, fmt.Sprintf("Auth session `%s` cancelled.", loginID), map[string]any{
 			"type":           "auth.cancel",
 			"target":         target,
 			"loginSessionId": loginID,
 			"revoked":        revoked,
+			"provider":       scope.Provider,
+			"account":        scope.Account,
+			"scope":          authScopeLabel(scope.Provider, scope.Account),
 		}), nil
 	default:
 		return telegramCommandReceipt(target, "Unknown `/auth` action. Use `/auth help` for full usage.", map[string]any{
@@ -781,9 +914,151 @@ func authExpiresInSeconds(expiresAt string) int {
 	return int(remaining)
 }
 
-func parseAuthWaitArgs(args []string, defaultLoginID string) (string, time.Duration, string) {
-	loginID := strings.TrimSpace(defaultLoginID)
-	timeout := 30 * time.Second
+type authCommandScope struct {
+	Provider  string
+	Account   string
+	SessionID string
+	Code      string
+	Timeout   time.Duration
+	Force     bool
+}
+
+func authScopeLabel(provider string, account string) string {
+	p := normalizeAuthProviderOrFallback(provider, "chatgpt")
+	a := strings.TrimSpace(account)
+	if a == "" {
+		a = "default"
+	}
+	return fmt.Sprintf("%s/%s", p, a)
+}
+
+func normalizeAuthProviderOrFallback(provider string, fallbackProvider string) string {
+	normalized := normalizeProviderAlias(provider)
+	if normalized == "" {
+		normalized = normalizeProviderAlias(fallbackProvider)
+	}
+	if normalized == "" {
+		normalized = "chatgpt"
+	}
+	return normalized
+}
+
+func isKnownAuthProvider(candidate string) bool {
+	normalized := normalizeProviderAlias(candidate)
+	if normalized == "" {
+		return false
+	}
+	for _, provider := range knownAuthProviders() {
+		if normalizeProviderAlias(provider) == normalized {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeLoginSessionID(candidate string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(candidate))
+	return strings.HasPrefix(normalized, "web-login-") || strings.HasPrefix(normalized, "oc-login-")
+}
+
+func parseAuthStartScope(args []string, fallbackProvider string) (authCommandScope, string) {
+	scope := authCommandScope{
+		Provider: normalizeAuthProviderOrFallback("", fallbackProvider),
+		Timeout:  30 * time.Second,
+	}
+	positional := make([]string, 0, 4)
+	for _, token := range args {
+		trimmed := strings.TrimSpace(token)
+		if trimmed == "" {
+			continue
+		}
+		lowered := strings.ToLower(trimmed)
+		switch lowered {
+		case "--force":
+			scope.Force = true
+		default:
+			if strings.HasPrefix(lowered, "--") {
+				return scope, fmt.Sprintf("Unknown start option `%s`.", trimmed)
+			}
+			positional = append(positional, trimmed)
+		}
+	}
+	if len(positional) >= 1 {
+		if isKnownAuthProvider(positional[0]) {
+			scope.Provider = normalizeAuthProviderOrFallback(positional[0], fallbackProvider)
+		} else {
+			scope.Account = positional[0]
+		}
+	}
+	if len(positional) >= 2 {
+		if scope.Account == "" {
+			scope.Account = positional[1]
+		} else {
+			return scope, "Usage: `/auth start <provider> [account] [--force]`"
+		}
+	}
+	if len(positional) > 2 {
+		return scope, "Usage: `/auth start <provider> [account] [--force]`"
+	}
+	return scope, ""
+}
+
+func parseAuthStatusScope(args []string, fallbackProvider string) (authCommandScope, string) {
+	scope := authCommandScope{
+		Provider: normalizeAuthProviderOrFallback("", fallbackProvider),
+		Timeout:  30 * time.Second,
+	}
+	positional := make([]string, 0, 4)
+	for _, token := range args {
+		trimmed := strings.TrimSpace(token)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "--") {
+			return scope, fmt.Sprintf("Unknown status option `%s`.", trimmed)
+		}
+		positional = append(positional, trimmed)
+	}
+	if len(positional) >= 1 {
+		first := positional[0]
+		if looksLikeLoginSessionID(first) {
+			scope.SessionID = first
+		} else if isKnownAuthProvider(first) {
+			scope.Provider = normalizeAuthProviderOrFallback(first, fallbackProvider)
+		} else {
+			scope.Account = first
+		}
+	}
+	if len(positional) >= 2 {
+		second := positional[1]
+		if looksLikeLoginSessionID(second) && scope.SessionID == "" {
+			scope.SessionID = second
+		} else if scope.Account == "" {
+			scope.Account = second
+		} else {
+			return scope, "Usage: `/auth status [provider] [account] [session_id]`"
+		}
+	}
+	if len(positional) >= 3 {
+		third := positional[2]
+		if looksLikeLoginSessionID(third) && scope.SessionID == "" {
+			scope.SessionID = third
+		} else {
+			return scope, "Usage: `/auth status [provider] [account] [session_id]`"
+		}
+	}
+	if len(positional) > 3 {
+		return scope, "Usage: `/auth status [provider] [account] [session_id]`"
+	}
+	return scope, ""
+}
+
+func parseAuthWaitScope(args []string, fallbackProvider string) (authCommandScope, string) {
+	scope := authCommandScope{
+		Provider: normalizeAuthProviderOrFallback("", fallbackProvider),
+		Timeout:  30 * time.Second,
+	}
+	positional := make([]string, 0, 4)
 
 	for idx := 0; idx < len(args); idx++ {
 		token := strings.TrimSpace(args[idx])
@@ -794,38 +1069,113 @@ func parseAuthWaitArgs(args []string, defaultLoginID string) (string, time.Durat
 		switch {
 		case lowered == "session":
 			if idx+1 >= len(args) {
-				return "", 0, "Usage: `/auth wait [session <ID>|<ID>] [--timeout <seconds>]`"
+				return scope, "Usage: `/auth wait <provider> [session_id] [account] [--timeout <seconds>]`"
 			}
 			idx++
-			loginID = strings.TrimSpace(args[idx])
+			scope.SessionID = strings.TrimSpace(args[idx])
 		case lowered == "--timeout":
 			if idx+1 >= len(args) {
-				return "", 0, "Missing timeout value. Example: `/auth wait --timeout 90`"
+				return scope, "Missing timeout value. Example: `/auth wait --timeout 90`"
 			}
 			idx++
 			seconds, err := strconv.Atoi(strings.TrimSpace(args[idx]))
 			if err != nil || seconds < 1 || seconds > 900 {
-				return "", 0, "Timeout must be an integer between 1 and 900 seconds."
+				return scope, "Timeout must be an integer between 1 and 900 seconds."
 			}
-			timeout = time.Duration(seconds) * time.Second
+			scope.Timeout = time.Duration(seconds) * time.Second
 		case strings.HasPrefix(lowered, "--timeout="):
 			raw := strings.TrimSpace(strings.TrimPrefix(lowered, "--timeout="))
 			seconds, err := strconv.Atoi(raw)
 			if err != nil || seconds < 1 || seconds > 900 {
-				return "", 0, "Timeout must be an integer between 1 and 900 seconds."
+				return scope, "Timeout must be an integer between 1 and 900 seconds."
 			}
-			timeout = time.Duration(seconds) * time.Second
+			scope.Timeout = time.Duration(seconds) * time.Second
 		case strings.HasPrefix(lowered, "--"):
-			return "", 0, fmt.Sprintf("Unknown wait option `%s`.", token)
+			return scope, fmt.Sprintf("Unknown wait option `%s`.", token)
 		default:
-			loginID = token
+			positional = append(positional, token)
 		}
 	}
 
-	if loginID == "" {
-		return "", 0, "No auth session selected. Start auth first with `/auth`."
+	if len(positional) >= 1 {
+		first := positional[0]
+		if looksLikeLoginSessionID(first) {
+			scope.SessionID = first
+		} else {
+			scope.Provider = normalizeAuthProviderOrFallback(first, fallbackProvider)
+		}
 	}
-	return loginID, timeout, ""
+	if len(positional) >= 2 {
+		second := positional[1]
+		if looksLikeLoginSessionID(second) && scope.SessionID == "" {
+			scope.SessionID = second
+		} else if scope.Account == "" {
+			scope.Account = second
+		} else {
+			return scope, "Usage: `/auth wait <provider> [session_id] [account] [--timeout <seconds>]`"
+		}
+	}
+	if len(positional) >= 3 {
+		third := positional[2]
+		if looksLikeLoginSessionID(third) && scope.SessionID == "" {
+			scope.SessionID = third
+		} else if scope.Account == "" {
+			scope.Account = third
+		} else {
+			return scope, "Usage: `/auth wait <provider> [session_id] [account] [--timeout <seconds>]`"
+		}
+	}
+	if len(positional) > 3 {
+		return scope, "Usage: `/auth wait <provider> [session_id] [account] [--timeout <seconds>]`"
+	}
+	return scope, ""
+}
+
+func parseAuthCompleteScope(args []string, fallbackProvider string) (authCommandScope, string) {
+	scope := authCommandScope{
+		Provider: normalizeAuthProviderOrFallback("", fallbackProvider),
+		Timeout:  30 * time.Second,
+	}
+	positional := make([]string, 0, 5)
+	for _, token := range args {
+		trimmed := strings.TrimSpace(token)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "--") {
+			return scope, fmt.Sprintf("Unknown complete option `%s`.", trimmed)
+		}
+		positional = append(positional, trimmed)
+	}
+	if len(positional) == 0 {
+		return scope, "Usage: `/auth complete <provider> <callback_url_or_code> [session_id] [account]`"
+	}
+
+	index := 0
+	if len(positional) >= 2 && isKnownAuthProvider(positional[0]) {
+		scope.Provider = normalizeAuthProviderOrFallback(positional[0], fallbackProvider)
+		index = 1
+	}
+
+	if index >= len(positional) {
+		return scope, "Usage: `/auth complete <provider> <callback_url_or_code> [session_id] [account]`"
+	}
+	scope.Code = positional[index]
+	index++
+
+	for ; index < len(positional); index++ {
+		token := positional[index]
+		if looksLikeLoginSessionID(token) && scope.SessionID == "" {
+			scope.SessionID = token
+			continue
+		}
+		if scope.Account == "" {
+			scope.Account = token
+			continue
+		}
+		return scope, "Usage: `/auth complete <provider> <callback_url_or_code> [session_id] [account]`"
+	}
+	return scope, ""
 }
 
 func extractAuthCode(input string) string {

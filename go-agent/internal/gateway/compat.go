@@ -33,6 +33,7 @@ type compatState struct {
 	telegramModelByTarget    map[string]string
 	telegramProviderByTarget map[string]string
 	telegramAuthByTarget     map[string]string
+	telegramAuthByScope      map[string]string
 	providerAPIKeys          map[string]string
 
 	agentSeq   int
@@ -123,6 +124,7 @@ func newCompatState() *compatState {
 		telegramModelByTarget:    map[string]string{},
 		telegramProviderByTarget: map[string]string{},
 		telegramAuthByTarget:     map[string]string{},
+		telegramAuthByScope:      map[string]string{},
 		providerAPIKeys:          map[string]string{},
 		agentSeq:                 0,
 		agents:                   map[string]map[string]any{},
@@ -446,6 +448,100 @@ func (c *compatState) setTelegramAuth(target string, loginID string) {
 	c.mu.Lock()
 	c.telegramAuthByTarget[targetKey] = strings.TrimSpace(loginID)
 	c.mu.Unlock()
+}
+
+func normalizeAuthAccount(account string) string {
+	return strings.ToLower(strings.TrimSpace(account))
+}
+
+func telegramAuthScopeKey(target string, provider string, account string) string {
+	targetKey := strings.ToLower(strings.TrimSpace(target))
+	providerKey := normalizeProviderAlias(provider)
+	accountKey := normalizeAuthAccount(account)
+	if providerKey == "" {
+		providerKey = "_default"
+	}
+	if accountKey == "" {
+		accountKey = "_default"
+	}
+	return strings.Join([]string{targetKey, providerKey, accountKey}, "|")
+}
+
+func (c *compatState) setTelegramAuthScoped(target string, provider string, account string, loginID string) {
+	targetKey := strings.ToLower(strings.TrimSpace(target))
+	scopeKey := telegramAuthScopeKey(target, provider, account)
+	normalizedLoginID := strings.TrimSpace(loginID)
+	c.mu.Lock()
+	previousScoped := strings.TrimSpace(c.telegramAuthByScope[scopeKey])
+	c.telegramAuthByScope[scopeKey] = normalizedLoginID
+	if normalizedLoginID != "" {
+		c.telegramAuthByTarget[targetKey] = normalizedLoginID
+		c.mu.Unlock()
+		return
+	}
+
+	currentTarget := strings.TrimSpace(c.telegramAuthByTarget[targetKey])
+	if currentTarget != "" && currentTarget != previousScoped {
+		c.mu.Unlock()
+		return
+	}
+	fallback := ""
+	prefix := targetKey + "|"
+	for key, candidate := range c.telegramAuthByScope {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		fallback = candidate
+		break
+	}
+	c.telegramAuthByTarget[targetKey] = fallback
+	c.mu.Unlock()
+}
+
+func (c *compatState) getTelegramAuthScoped(target string, provider string, account string) string {
+	targetKey := strings.ToLower(strings.TrimSpace(target))
+	providerKey := normalizeProviderAlias(provider)
+	accountKey := normalizeAuthAccount(account)
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if providerKey == "" && accountKey == "" {
+		return strings.TrimSpace(c.telegramAuthByTarget[targetKey])
+	}
+
+	if exact := strings.TrimSpace(c.telegramAuthByScope[telegramAuthScopeKey(target, providerKey, accountKey)]); exact != "" {
+		return exact
+	}
+
+	if providerKey != "" && accountKey == "" {
+		prefix := strings.Join([]string{targetKey, providerKey, ""}, "|")
+		for key, loginID := range c.telegramAuthByScope {
+			if strings.HasPrefix(key, prefix) {
+				if trimmed := strings.TrimSpace(loginID); trimmed != "" {
+					return trimmed
+				}
+			}
+		}
+	}
+
+	if providerKey == "" && accountKey != "" {
+		suffix := "|" + accountKey
+		prefix := targetKey + "|"
+		for key, loginID := range c.telegramAuthByScope {
+			if strings.HasPrefix(key, prefix) && strings.HasSuffix(key, suffix) {
+				if trimmed := strings.TrimSpace(loginID); trimmed != "" {
+					return trimmed
+				}
+			}
+		}
+	}
+
+	return strings.TrimSpace(c.telegramAuthByTarget[targetKey])
 }
 
 func (c *compatState) setProviderAPIKey(provider string, apiKey string) bool {

@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -61,5 +62,28 @@ func TestIsAuthorized(t *testing.T) {
 	}
 	if m.IsAuthorized("missing-session") {
 		t.Fatalf("missing session should not be authorized")
+	}
+}
+
+func TestProviderVerificationURI(t *testing.T) {
+	m := NewManager(5 * time.Minute)
+	cases := []struct {
+		provider string
+		prefix   string
+	}{
+		{provider: "chatgpt", prefix: "https://chatgpt.com/"},
+		{provider: "codex", prefix: "https://chatgpt.com/"},
+		{provider: "openrouter", prefix: "https://openrouter.ai/"},
+		{provider: "kimi", prefix: "https://kimi.com/"},
+		{provider: "qwen", prefix: "https://chat.qwen.ai/"},
+	}
+	for _, tc := range cases {
+		session := m.Start(StartOptions{Provider: tc.provider, Model: "auto"})
+		if session.VerificationURI != tc.prefix {
+			t.Fatalf("provider %s verification URI mismatch: got=%s want=%s", tc.provider, session.VerificationURI, tc.prefix)
+		}
+		if !strings.HasPrefix(session.VerificationURIComplete, strings.TrimRight(tc.prefix, "/")) {
+			t.Fatalf("provider %s verification URI complete should start with %s, got %s", tc.provider, strings.TrimRight(tc.prefix, "/"), session.VerificationURIComplete)
+		}
 	}
 }

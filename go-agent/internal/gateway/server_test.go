@@ -808,6 +808,73 @@ func TestTelegramCommandFlowModelAuthTTS(t *testing.T) {
 		t.Fatalf("expected auth.cancel metadata, got %v", authCancelMeta["type"])
 	}
 
+	authProviderStartResult := runCommand("tg-cmd-auth-start-provider", "/auth start codex mobile --force")
+	authProviderStartReceipt, _ := authProviderStartResult["result"].(map[string]any)
+	authProviderStartMeta, _ := authProviderStartReceipt["metadata"].(map[string]any)
+	if authProviderStartMeta["type"] != "auth.start" {
+		t.Fatalf("expected provider auth.start metadata, got %v", authProviderStartMeta["type"])
+	}
+	if toString(authProviderStartMeta["provider"], "") != "codex" {
+		t.Fatalf("expected provider auth provider=codex, got %v", authProviderStartMeta["provider"])
+	}
+	if toString(authProviderStartMeta["account"], "") != "mobile" {
+		t.Fatalf("expected provider auth account=mobile, got %v", authProviderStartMeta["account"])
+	}
+	providerCode := toString(authProviderStartMeta["code"], "")
+	if providerCode == "" {
+		t.Fatalf("expected code for provider auth.start")
+	}
+	providerSessionID := toString(authProviderStartMeta["loginSessionId"], "")
+	if providerSessionID == "" {
+		t.Fatalf("expected loginSessionId for provider auth.start")
+	}
+
+	authProviderStatusResult := runCommand("tg-cmd-auth-status-provider", "/auth status codex mobile")
+	authProviderStatusReceipt, _ := authProviderStatusResult["result"].(map[string]any)
+	authProviderStatusMeta, _ := authProviderStatusReceipt["metadata"].(map[string]any)
+	if authProviderStatusMeta["type"] != "auth.status" {
+		t.Fatalf("expected provider auth.status metadata, got %v", authProviderStatusMeta["type"])
+	}
+	loginStatusObj, _ := authProviderStatusMeta["login"].(map[string]any)
+	if toString(loginStatusObj["loginSessionId"], "") != providerSessionID {
+		t.Fatalf("expected provider status session %s, got %v", providerSessionID, loginStatusObj["loginSessionId"])
+	}
+
+	authProviderWaitResult := runCommand("tg-cmd-auth-wait-provider", "/auth wait codex mobile --timeout 1")
+	authProviderWaitReceipt, _ := authProviderWaitResult["result"].(map[string]any)
+	authProviderWaitMeta, _ := authProviderWaitReceipt["metadata"].(map[string]any)
+	if authProviderWaitMeta["type"] != "auth.wait" {
+		t.Fatalf("expected provider auth.wait metadata, got %v", authProviderWaitMeta["type"])
+	}
+
+	providerCallbackURL := "https://chatgpt.com/?openclaw_code=" + providerCode
+	authProviderCompleteResult := runCommand("tg-cmd-auth-complete-provider", "/auth complete codex "+providerCallbackURL+" mobile")
+	authProviderCompleteReceipt, _ := authProviderCompleteResult["result"].(map[string]any)
+	authProviderCompleteMeta, _ := authProviderCompleteReceipt["metadata"].(map[string]any)
+	if authProviderCompleteMeta["type"] != "auth.complete" {
+		t.Fatalf("expected provider auth.complete metadata, got %v", authProviderCompleteMeta["type"])
+	}
+	if toString(authProviderCompleteMeta["provider"], "") != "codex" {
+		t.Fatalf("expected provider auth.complete provider=codex, got %v", authProviderCompleteMeta["provider"])
+	}
+	if toString(authProviderCompleteMeta["account"], "") != "mobile" {
+		t.Fatalf("expected provider auth.complete account=mobile, got %v", authProviderCompleteMeta["account"])
+	}
+	providerLoginObj, _ := authProviderCompleteMeta["login"].(map[string]any)
+	if providerLoginObj["status"] != "authorized" {
+		t.Fatalf("expected provider authorized login status, got %v", providerLoginObj["status"])
+	}
+
+	authProviderCancelResult := runCommand("tg-cmd-auth-cancel-provider", "/auth cancel codex mobile")
+	authProviderCancelReceipt, _ := authProviderCancelResult["result"].(map[string]any)
+	authProviderCancelMeta, _ := authProviderCancelReceipt["metadata"].(map[string]any)
+	if authProviderCancelMeta["type"] != "auth.cancel" {
+		t.Fatalf("expected provider auth.cancel metadata, got %v", authProviderCancelMeta["type"])
+	}
+	if toString(authProviderCancelMeta["provider"], "") != "codex" {
+		t.Fatalf("expected provider cancel provider=codex, got %v", authProviderCancelMeta["provider"])
+	}
+
 	ttsProviderResult := runCommand("tg-cmd-tts-provider", "/tts provider openai-voice")
 	ttsProviderReceipt, _ := ttsProviderResult["result"].(map[string]any)
 	ttsProviderMeta, _ := ttsProviderReceipt["metadata"].(map[string]any)

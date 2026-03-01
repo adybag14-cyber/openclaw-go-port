@@ -535,3 +535,30 @@
   - `openclaw-go-linux-amd64`
   - `openclaw-go-android-arm64`
   - `SHA256SUMS.txt`
+
+### Post-v2 Continuation (Issue #6) - Slice 1: Provider-Scoped Telegram Auth Command Parity
+
+- Expanded Telegram auth flow semantics to support scoped auth contexts:
+  - provider/account-scoped auth mapping in compat state (`target + provider + account -> loginSessionId`), with safe fallback to target-level legacy mapping.
+  - retained backward compatibility with existing short forms (`/auth`, `/auth complete <code>`).
+- Expanded `/auth` command contracts:
+  - `/auth start <provider> [account] [--force]`
+  - `/auth status [provider] [account] [session_id]`
+  - `/auth wait <provider> [session_id] [account] [--timeout <seconds>]`
+  - `/auth complete <provider> <callback_url_or_code> [session_id] [account]`
+  - `/auth cancel [provider] [account] [session_id]`
+- Added richer auth metadata payloads for command results:
+  - `provider`, `account`, `scope`, and resolved session ids where applicable.
+- Added provider-specific browser verification URI routing in web login manager:
+  - `chatgpt|codex -> https://chatgpt.com/`
+  - `openrouter -> https://openrouter.ai/`
+  - `kimi -> https://kimi.com/`
+  - `qwen -> https://chat.qwen.ai/`
+  - plus login manager test coverage for provider verification URL outputs.
+- Added integration test coverage for provider/account auth flow:
+  - provider-scoped start/status/wait/complete/cancel path with callback URL code extraction.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go mod tidy`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`
