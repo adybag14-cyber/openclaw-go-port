@@ -889,3 +889,20 @@
   - `/usr/local/go/bin/gofmt -w ...`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation (Issue #19) - Slice 1: Telegram Auth Code Extraction Robustness
+
+- Expanded `/auth complete` callback code extraction semantics:
+  - supports query-based code/token extraction (`openclaw_code`, `code`, `device_code`, `auth_code`, `token`, `oauth_token`).
+  - supports fragment-based extraction (`#code=...`, `#token=...`, raw fragment tokens).
+  - supports path-style callback tokens (e.g., `/oauth/complete/<code>`).
+  - preserves existing plain-code passthrough behavior.
+- Added parser coverage for provider alias completion flows:
+  - Copaw alias in `parseAuthCompleteScope` resolves to canonical `qwen`.
+- Added unit tests:
+  - query/fragment/path extraction matrix.
+  - Copaw completion scope parsing + extracted code assertion.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`

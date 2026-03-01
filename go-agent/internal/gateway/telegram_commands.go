@@ -1186,13 +1186,66 @@ func extractAuthCode(input string) string {
 	if err != nil {
 		return raw
 	}
-	query := parsed.Query()
-	for _, key := range []string{"openclaw_code", "code", "device_code"} {
-		if value := strings.TrimSpace(query.Get(key)); value != "" {
-			return value
+	if value := extractAuthCodeFromValues(parsed.Query()); value != "" {
+		return value
+	}
+
+	fragment := strings.TrimSpace(parsed.Fragment)
+	if fragment != "" {
+		fragment = strings.TrimPrefix(fragment, "#")
+		if strings.Contains(fragment, "=") {
+			if values, err := neturl.ParseQuery(fragment); err == nil {
+				if value := extractAuthCodeFromValues(values); value != "" {
+					return value
+				}
+			}
+		}
+		candidate := strings.TrimSpace(strings.Trim(fragment, "/"))
+		if looksLikeAuthCode(candidate) {
+			return candidate
+		}
+		if parts := strings.Split(candidate, "/"); len(parts) > 0 {
+			last := strings.TrimSpace(parts[len(parts)-1])
+			if looksLikeAuthCode(last) {
+				return last
+			}
+		}
+	}
+
+	path := strings.TrimSpace(strings.Trim(parsed.Path, "/"))
+	if path != "" {
+		parts := strings.Split(path, "/")
+		last := strings.TrimSpace(parts[len(parts)-1])
+		if looksLikeAuthCode(last) {
+			return last
 		}
 	}
 	return raw
+}
+
+func extractAuthCodeFromValues(values neturl.Values) string {
+	for _, key := range []string{"openclaw_code", "code", "device_code", "auth_code", "token", "oauth_token"} {
+		if value := strings.TrimSpace(values.Get(key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func looksLikeAuthCode(candidate string) bool {
+	value := strings.TrimSpace(candidate)
+	if value == "" || len(value) < 4 || len(value) > 256 {
+		return false
+	}
+	lower := strings.ToLower(value)
+	switch lower {
+	case "callback", "oauth", "auth", "complete":
+		return false
+	}
+	if strings.ContainsAny(value, " \t\n\r") {
+		return false
+	}
+	return true
 }
 
 func knownAuthProviders() []string {

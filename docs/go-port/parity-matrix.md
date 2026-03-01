@@ -60,3 +60,4 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 - Slice 22 complete (Issue #16): `auth.oauth.providers` contract depth (strict unknown-param rejection, alias-aware provider filtering, deterministic ordering, and explicit count/providerRequested metadata).
 - Slice 23 complete (Issue #17): `auth.oauth.import` hardening (strict unknown-param rejection, catalog-backed provider canonicalization, unknown-provider rejection, and canonical provider metadata in responses).
 - Slice 24 complete (Issue #18): provider-specific browser bridge routing (canonical provider endpoint overrides with default fallback, plus provider-aware endpoint metadata in runtime responses).
+- Slice 25 complete (Issue #19): Telegram `/auth complete` extraction robustness (query/fragment/path callback code parsing plus Copaw/Qwen alias completion parsing coverage).
