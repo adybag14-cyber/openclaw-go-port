@@ -59,3 +59,4 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 - Slice 21 complete (Issue #15): `models.list` contract depth (strict unknown-param rejection, provider alias filtering, deterministic ordering, and provider metadata summary).
 - Slice 22 complete (Issue #16): `auth.oauth.providers` contract depth (strict unknown-param rejection, alias-aware provider filtering, deterministic ordering, and explicit count/providerRequested metadata).
 - Slice 23 complete (Issue #17): `auth.oauth.import` hardening (strict unknown-param rejection, catalog-backed provider canonicalization, unknown-provider rejection, and canonical provider metadata in responses).
+- Slice 24 complete (Issue #18): provider-specific browser bridge routing (canonical provider endpoint overrides with default fallback, plus provider-aware endpoint metadata in runtime responses).

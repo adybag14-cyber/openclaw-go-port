@@ -873,3 +873,19 @@
   - `/usr/local/go/bin/gofmt -w ...`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation (Issue #18) - Slice 1: Provider-Specific Browser Bridge Endpoint Routing
+
+- Expanded browser runtime bridge options:
+  - added provider-scoped endpoint map support (`EndpointByProvider`) with canonical provider alias normalization.
+  - preserved backward-compatible fallback to default bridge endpoint (`Endpoint`) when no provider override is configured.
+- Runtime completion path now resolves endpoint per canonical provider before dispatch:
+  - supports Copaw/Qwen alias normalization in endpoint selection.
+  - completion response metadata now includes selected endpoint for observability.
+- Added parity-focused runtime tests:
+  - provider-scoped endpoint override is selected for Qwen/Copaw requests.
+  - default endpoint remains unused when provider override is configured.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ...`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`

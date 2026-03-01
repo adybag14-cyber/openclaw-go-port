@@ -50,6 +50,7 @@ type RuntimeOptions struct {
 type BrowserBridgeOptions struct {
 	Enabled              bool
 	Endpoint             string
+	EndpointByProvider   map[string]string
 	RequestTimeout       time.Duration
 	Retries              int
 	RetryBackoff         time.Duration
@@ -102,6 +103,16 @@ func normalizeBrowserBridgeOptions(input BrowserBridgeOptions) BrowserBridgeOpti
 	if strings.TrimSpace(out.Endpoint) == "" {
 		out.Endpoint = defaults.Endpoint
 	}
+	normalizedByProvider := map[string]string{}
+	for rawProvider, endpoint := range out.EndpointByProvider {
+		provider := normalizeBrowserProviderAlias(rawProvider)
+		trimmedEndpoint := strings.TrimSpace(endpoint)
+		if provider == "" || trimmedEndpoint == "" {
+			continue
+		}
+		normalizedByProvider[provider] = trimmedEndpoint
+	}
+	out.EndpointByProvider = normalizedByProvider
 	if out.RequestTimeout <= 0 {
 		out.RequestTimeout = defaults.RequestTimeout
 	}
@@ -1117,7 +1128,9 @@ func (e *bridgeHTTPError) Retryable() bool {
 }
 
 func (b *BuiltinBridgeProvider) invokeBrowserCompletion(ctx context.Context, payload map[string]any) (any, error) {
-	if strings.TrimSpace(b.browser.Endpoint) == "" {
+	provider := normalizeBrowserProviderAlias(toString(payload["provider"], "chatgpt"))
+	endpoint := b.browserEndpointForProvider(provider)
+	if strings.TrimSpace(endpoint) == "" {
 		return nil, errors.New("browser bridge endpoint is empty")
 	}
 	if allowed, wait := b.allowBridgeRequest(); !allowed {
@@ -1127,16 +1140,16 @@ func (b *BuiltinBridgeProvider) invokeBrowserCompletion(ctx context.Context, pay
 	lastErr := error(nil)
 	maxAttempts := b.browser.Retries + 1
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		response, statusCode, err := b.postBridgeCompletion(ctx, payload)
+		response, statusCode, err := b.postBridgeCompletion(ctx, payload, endpoint)
 		if err == nil {
 			assistant := extractAssistantMessage(response)
-			provider := normalizeBrowserProviderAlias(toString(payload["provider"], "chatgpt"))
 			b.recordBridgeSuccess()
 			return map[string]any{
 				"status":        200,
 				"ok":            true,
 				"provider":      provider,
 				"bridge":        "browser",
+				"endpoint":      endpoint,
 				"bridgeStatus":  statusCode,
 				"attempt":       attempt,
 				"model":         toString(response["model"], toString(payload["model"], "gpt-5.2")),
@@ -1172,13 +1185,24 @@ func (b *BuiltinBridgeProvider) invokeBrowserCompletion(ctx context.Context, pay
 	return nil, fmt.Errorf("browser bridge completion failed after %d attempts: %w", maxAttempts, lastErr)
 }
 
-func (b *BuiltinBridgeProvider) postBridgeCompletion(ctx context.Context, payload map[string]any) (map[string]any, int, error) {
+func (b *BuiltinBridgeProvider) browserEndpointForProvider(provider string) string {
+	canonical := normalizeBrowserProviderAlias(provider)
+	if endpoint, ok := b.browser.EndpointByProvider[canonical]; ok {
+		trimmed := strings.TrimSpace(endpoint)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return strings.TrimSpace(b.browser.Endpoint)
+}
+
+func (b *BuiltinBridgeProvider) postBridgeCompletion(ctx context.Context, payload map[string]any, endpoint string) (map[string]any, int, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	endpoint := strings.TrimRight(strings.TrimSpace(b.browser.Endpoint), "/") + "/v1/chat/completions"
+	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/") + "/v1/chat/completions"
 	reqCtx, cancel := context.WithTimeout(ctx, b.browser.RequestTimeout)
 	defer cancel()
 

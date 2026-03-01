@@ -290,6 +290,67 @@ func TestBrowserRequestCompletionRetriesThenSucceeds(t *testing.T) {
 	}
 }
 
+func TestBrowserRequestCompletionUsesProviderSpecificEndpoint(t *testing.T) {
+	var defaultCalls atomic.Int32
+	defaultBridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defaultCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cmpl-default","model":"gpt-5.2","choices":[{"message":{"role":"assistant","content":"default"}}]}`))
+	}))
+	defer defaultBridge.Close()
+
+	var qwenCalls atomic.Int32
+	qwenBridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		qwenCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cmpl-qwen","model":"qwen3.5-plus","choices":[{"message":{"role":"assistant","content":"qwen-endpoint"}}]}`))
+	}))
+	defer qwenBridge.Close()
+
+	rt := NewDefaultWithOptions(RuntimeOptions{
+		BrowserBridge: BrowserBridgeOptions{
+			Enabled:            true,
+			Endpoint:           defaultBridge.URL,
+			EndpointByProvider: map[string]string{"qwen": qwenBridge.URL},
+			RequestTimeout:     3 * time.Second,
+			Retries:            0,
+			RetryBackoff:       0,
+			CircuitCooldown:    3 * time.Second,
+		},
+	})
+
+	result, err := rt.Invoke(context.Background(), Request{
+		Tool: "browser.request",
+		Input: map[string]any{
+			"provider": "copaw",
+			"model":    "qwen3.5-plus",
+			"messages": []map[string]any{
+				{"role": "user", "content": "hello"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("browser.request provider endpoint invoke failed: %v", err)
+	}
+
+	output, ok := result.Output.(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected output type: %T", result.Output)
+	}
+	if output["provider"] != "qwen" {
+		t.Fatalf("expected output provider qwen, got %v", output["provider"])
+	}
+	if output["assistantText"] != "qwen-endpoint" {
+		t.Fatalf("expected provider-specific endpoint response, got %v", output["assistantText"])
+	}
+	if qwenCalls.Load() != 1 {
+		t.Fatalf("expected qwen endpoint to be called once, got %d", qwenCalls.Load())
+	}
+	if defaultCalls.Load() != 0 {
+		t.Fatalf("expected default endpoint to be unused, got %d calls", defaultCalls.Load())
+	}
+}
+
 func TestBrowserRequestCircuitBreakerOpens(t *testing.T) {
 	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
