@@ -2,3 +2,6 @@
 /.cargo
 tmp_*.log
 /.openclaw-rs
+/dist
+.env
+openclaw-go.toml

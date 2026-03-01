@@ -23,13 +23,13 @@ docker run --rm -v "$PWD/go-agent:/work" -w /work golang:1.25 sh -lc "export PAT
 Windows PowerShell:
 
 ```powershell
-pwsh ./scripts/build-matrix.ps1 -Version 2.6.1
+pwsh ./scripts/build-matrix.ps1 -Version 2.7.0
 ```
 
 POSIX shell:
 
 ```bash
-sh ./scripts/build-matrix.sh 2.6.1
+sh ./scripts/build-matrix.sh 2.7.0
 ```
 
 Artifacts include:
@@ -42,3 +42,9 @@ The build scripts enforce:
 - `CGO_ENABLED=0`
 - stripped binaries (`-ldflags "-s -w"`)
 - deterministic matrix output suitable for Termux/Android deployment flows.
+
+## Docker Runtime
+
+Use repository-level compose profiles for runtime deployment:
+- `docker-compose.yml` for core gateway service.
+- `docker-compose.bridge.yml` to add browser auth bridge integration.

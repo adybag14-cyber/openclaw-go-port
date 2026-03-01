@@ -5,6 +5,32 @@
 ### Highlights
 - No unreleased changes.
 
+## v2.7.0-go - 2026-03-01
+
+### Highlights
+- Added first-class Docker deployment profiles for Go runtime operation:
+  - core gateway profile (`docker-compose.yml`)
+  - optional browser-bridge overlay (`docker-compose.bridge.yml`)
+- Added repo-level container build path:
+  - new root `Dockerfile` for `openclaw-go` Linux runtime image.
+- Added environment/bootstrap tooling for local operator setup:
+  - `.env.example`
+  - `prepare-env.ps1`
+  - `prepare-env.sh`
+- Hardened finetune timeout regression coverage for deterministic CI/runtime behavior:
+  - `TestEdgeFinetuneRunReportsExecutionTimeout` now uses a pure-shell busy-loop trainer mock.
+- Updated documentation and release flow references for `v2.7.0-go`.
+
+### Validation
+- Dockerized Go validation:
+  - `go test ./...`
+  - `go vet ./...`
+- Compose validation:
+  - `docker compose config`
+  - `docker compose -f docker-compose.yml -f docker-compose.bridge.yml config`
+- Release build matrix:
+  - `go-agent/scripts/build-matrix.sh 2.7.0 ../dist/release-v2.7.0-go-assets`
+
 ## v2.6.1-go - 2026-03-01
 
 ### Highlights

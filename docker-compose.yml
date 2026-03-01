@@ -1,0 +1,31 @@
+services:
+  openclaw-go:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: openclaw-go
+    env_file:
+      - .env
+    environment:
+      OPENCLAW_GO_GATEWAY_AUTH_MODE: ${OPENCLAW_GO_GATEWAY_AUTH_MODE:-token}
+      OPENCLAW_GO_GATEWAY_TOKEN: ${OPENCLAW_GO_GATEWAY_TOKEN}
+      OPENCLAW_GO_WS_BIND: ${OPENCLAW_GO_WS_BIND:-0.0.0.0:8765}
+      OPENCLAW_GO_HTTP_BIND: ${OPENCLAW_GO_HTTP_BIND:-0.0.0.0:8766}
+      OPENCLAW_GO_STATE_PATH: ${OPENCLAW_GO_STATE_PATH:-/var/lib/openclaw-go/state.json}
+      OPENCLAW_GO_TELEGRAM_BOT_TOKEN: ${OPENCLAW_GO_TELEGRAM_BOT_TOKEN:-}
+      OPENCLAW_GO_TELEGRAM_DEFAULT_TARGET: ${OPENCLAW_GO_TELEGRAM_DEFAULT_TARGET:-}
+    volumes:
+      - ./openclaw-go.toml:/app/openclaw-go.toml:ro
+      - openclaw_go_data:/var/lib/openclaw-go
+    ports:
+      - "8765:8765"
+      - "8766:8766"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8766/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
+volumes:
+  openclaw_go_data:

@@ -967,3 +967,30 @@
   - Rust-only deploy parity stack and parity gate scripts
   - Rust-era planning docs that were tied to pre-Go runtime shipping
 - Updated mainline docs to reflect Go-only runtime path and archive ref.
+
+### Post-v2 Continuation - v2.7.0-go Dockerized Deployment Profile Expansion
+
+- Added Dockerized runtime deployment surfaces for the Go-only repo:
+  - root `Dockerfile` to build `openclaw-go` Linux runtime image.
+  - `docker-compose.yml` for core gateway service.
+  - `docker-compose.bridge.yml` overlay for browser-bridge sidecar integration.
+- Added operator bootstrap artifacts:
+  - `.env.example`
+  - `prepare-env.ps1`
+  - `prepare-env.sh`
+- Updated docs/version references for next release cut:
+  - `README.md`
+  - `go-agent/README.md`
+  - `CHANGELOG.md`
+- Stabilized gateway finetune timeout regression test for deterministic containerized gate behavior:
+  - `go-agent/internal/gateway/server_test.go` (`TestEdgeFinetuneRunReportsExecutionTimeout`).
+- Validation completed:
+  - `go test ./...`
+  - `go vet ./...`
+  - `docker compose config`
+  - `docker compose -f docker-compose.yml -f docker-compose.bridge.yml config`
+- Built release assets:
+  - `dist/release-v2.7.0-go-assets/openclaw-go-windows-amd64.exe`
+  - `dist/release-v2.7.0-go-assets/openclaw-go-linux-amd64`
+  - `dist/release-v2.7.0-go-assets/openclaw-go-android-arm64`
+  - `dist/release-v2.7.0-go-assets/SHA256SUMS.txt`

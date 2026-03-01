@@ -2,7 +2,7 @@
 
 OpenClaw is now fully ported to Go in this repository.
 
-Current release: `v2.6.1-go`
+Current release: `v2.7.0-go`
 
 ## Status
 
@@ -77,20 +77,50 @@ If Go is not installed locally, run tests with Docker:
 docker run --rm -v "${PWD}/go-agent:/work" -w /work golang:1.25 sh -lc "export PATH=/usr/local/go/bin:$PATH; go test ./... && go vet ./..."
 ```
 
+## Docker Deployment Profiles
+
+From repo root:
+
+1. Bootstrap env/config:
+
+```powershell
+./prepare-env.ps1
+```
+
+```bash
+sh ./prepare-env.sh
+```
+
+2. Core gateway (HTTP + RPC + channels):
+
+```bash
+docker compose up -d --build
+```
+
+3. Gateway + browser auth bridge (Playwright container):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.bridge.yml up -d --build
+```
+
+Compose files:
+- `docker-compose.yml`: Go runtime service.
+- `docker-compose.bridge.yml`: ChatGPT browser bridge service + endpoint wiring.
+
 ## Build Release Artifacts
 
 ### PowerShell
 
 ```powershell
 Set-Location go-agent
-./scripts/build-matrix.ps1 -Version 2.6.1 -OutputDir ../dist/release-v2.6.1-go-assets
+./scripts/build-matrix.ps1 -Version 2.7.0 -OutputDir ../dist/release-v2.7.0-go-assets
 ```
 
 ### POSIX shell
 
 ```bash
 cd go-agent
-sh ./scripts/build-matrix.sh 2.6.1 ../dist/release-v2.6.1-go-assets
+sh ./scripts/build-matrix.sh 2.7.0 ../dist/release-v2.7.0-go-assets
 ```
 
 Outputs:
@@ -107,9 +137,9 @@ Build defaults:
 
 ```powershell
 git push origin main
-git tag v2.6.1-go
-git push origin v2.6.1-go
-gh release create v2.6.1-go dist/release-v2.6.1-go-assets/openclaw-go-windows-amd64.exe dist/release-v2.6.1-go-assets/openclaw-go-linux-amd64 dist/release-v2.6.1-go-assets/openclaw-go-android-arm64 dist/release-v2.6.1-go-assets/SHA256SUMS.txt -R adybag14-cyber/openclaw-go-port --title "OpenClaw Go v2.6.1" --notes-file docs/go-port/release-v2.6.1-go.md
+git tag v2.7.0-go
+git push origin v2.7.0-go
+gh release create v2.7.0-go dist/release-v2.7.0-go-assets/openclaw-go-windows-amd64.exe dist/release-v2.7.0-go-assets/openclaw-go-linux-amd64 dist/release-v2.7.0-go-assets/openclaw-go-android-arm64 dist/release-v2.7.0-go-assets/SHA256SUMS.txt -R adybag14-cyber/openclaw-go-port --title "OpenClaw Go v2.7.0" --notes-file docs/go-port/release-v2.7.0-go.md
 ```
 
 ## Telegram and Auth Flows
@@ -163,7 +193,7 @@ auth_prefix = "Bearer"
 
 ## Additional Docs
 
-- Go release notes: `docs/go-port/release-v2.6.1-go.md`
+- Go release notes: `docs/go-port/release-v2.7.0-go.md`
 - Port plan: `docs/GO_PORT_PLAN.md`
 - Phase checklist: `docs/go-port/phase-checklist.md`
 - Go changelog entries: `CHANGELOG.md`

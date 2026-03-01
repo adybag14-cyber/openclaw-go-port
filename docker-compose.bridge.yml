@@ -1,0 +1,26 @@
+services:
+  openclaw-browser-bridge:
+    image: mcr.microsoft.com/playwright:v1.52.0-noble
+    container_name: openclaw-browser-bridge
+    working_dir: /workspace
+    command: ["node", "/workspace/scripts/chatgpt-browser-bridge.mjs"]
+    environment:
+      OPENCLAW_CHATGPT_BRIDGE_HOST: ${OPENCLAW_CHATGPT_BRIDGE_HOST:-0.0.0.0}
+      OPENCLAW_CHATGPT_BRIDGE_PORT: ${OPENCLAW_CHATGPT_BRIDGE_PORT:-43010}
+      OPENCLAW_CHATGPT_PROFILE_DIR: /workspace/.openclaw-rs/chatgpt-browser-profile
+    volumes:
+      - ./:/workspace
+      - openclaw_browser_profile:/workspace/.openclaw-rs/chatgpt-browser-profile
+    ports:
+      - "43010:43010"
+    restart: unless-stopped
+
+  openclaw-go:
+    environment:
+      OPENCLAW_GO_BROWSER_BRIDGE_ENDPOINT: ${OPENCLAW_GO_BROWSER_BRIDGE_ENDPOINT:-http://openclaw-browser-bridge:43010}
+    depends_on:
+      openclaw-browser-bridge:
+        condition: service_started
+
+volumes:
+  openclaw_browser_profile:

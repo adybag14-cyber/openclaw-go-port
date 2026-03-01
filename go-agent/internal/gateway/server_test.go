@@ -1964,8 +1964,9 @@ func TestEdgeFinetuneRunReportsExecutionFailure(t *testing.T) {
 func TestEdgeFinetuneRunReportsExecutionTimeout(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "trainer-timeout.sh")
 	script := "#!/bin/sh\n" +
-		"sleep 6\n" +
-		"echo \"done\"\n"
+		"while :; do\n" +
+		"  :\n" +
+		"done\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatalf("write trainer timeout mock: %v", err)
 	}
