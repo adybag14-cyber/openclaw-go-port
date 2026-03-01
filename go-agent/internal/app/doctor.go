@@ -1,10 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"net"
 	"net/url"
 	"os"
 	osexec "os/exec"
+	stdruntime "runtime"
 	"strconv"
 	"strings"
 
@@ -98,6 +100,7 @@ func buildDoctorChecks(cfg config.Config, report securityaudit.Report) []doctorC
 		Message: statePath,
 		Detail:  stateDetail,
 	})
+	checks = append(checks, buildSystemdConflictCheck())
 
 	policyPath := strings.TrimSpace(cfg.Security.PolicyBundlePath)
 	policyStatus := "pass"
@@ -266,4 +269,87 @@ func detailOr(raw string, fallback string) string {
 
 func intString(v int) string {
 	return strconv.Itoa(v)
+}
+
+func buildSystemdConflictCheck() doctorCheck {
+	check := doctorCheck{
+		ID:      "runtime.systemd_unit_conflicts",
+		Status:  "pass",
+		Message: "no systemd unit conflicts detected",
+		Detail:  "single-scope service ownership is healthy",
+	}
+
+	if stdruntime.GOOS != "linux" {
+		check.Status = "warn"
+		check.Message = "systemd diagnostics not available on this platform"
+		check.Detail = "runtime.systemd_unit_conflicts is only evaluated on Linux"
+		return check
+	}
+	if !commandAvailable("systemctl") {
+		check.Status = "warn"
+		check.Message = "systemctl is not available"
+		check.Detail = "cannot evaluate user/system unit overlap without systemctl"
+		return check
+	}
+
+	interestingUnits := []string{
+		"openclaw-go.service",
+		"openclaw-http-bridge.service",
+		"openclaw-zaiweb-bridge.service",
+	}
+	detailLines := make([]string, 0, len(interestingUnits))
+	conflicts := make([]string, 0, 4)
+	systemActive := map[string]bool{}
+	userActive := map[string]bool{}
+
+	for _, unit := range interestingUnits {
+		systemState := systemdUnitState(unit, false)
+		userState := systemdUnitState(unit, true)
+		detailLines = append(detailLines, unit+" system="+systemState+" user="+userState)
+		systemActive[unit] = systemState == "active"
+		userActive[unit] = userState == "active"
+		if systemActive[unit] && userActive[unit] {
+			conflicts = append(conflicts, unit+" active in both system and user scopes")
+		}
+	}
+
+	if (systemActive["openclaw-http-bridge.service"] || userActive["openclaw-http-bridge.service"]) &&
+		(systemActive["openclaw-zaiweb-bridge.service"] || userActive["openclaw-zaiweb-bridge.service"]) {
+		conflicts = append(conflicts, "both openclaw-http-bridge and openclaw-zaiweb-bridge are active")
+	}
+
+	if len(conflicts) > 0 {
+		check.Status = "warn"
+		check.Message = "conflicting OpenClaw systemd units detected"
+		check.Detail = strings.Join(append(conflicts, detailLines...), "; ")
+		return check
+	}
+
+	check.Detail = strings.Join(detailLines, "; ")
+	return check
+}
+
+func systemdUnitState(unit string, user bool) string {
+	args := []string{"is-active", unit}
+	if user {
+		args = append([]string{"--user"}, args...)
+	}
+	cmd := osexec.Command("systemctl", args...)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+
+	state := strings.TrimSpace(stdout.String())
+	if state == "" {
+		state = strings.TrimSpace(stderr.String())
+	}
+	if state == "" && err != nil {
+		return "unknown"
+	}
+	if state == "" {
+		return "inactive"
+	}
+	return strings.ToLower(strings.TrimSpace(strings.Split(state, "\n")[0]))
 }

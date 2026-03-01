@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -45,10 +47,12 @@ type DeepGateway struct {
 }
 
 type DeepBrowserBridge struct {
-	Attempted bool   `json:"attempted"`
-	Endpoint  string `json:"endpoint,omitempty"`
-	OK        bool   `json:"ok"`
-	Error     string `json:"error,omitempty"`
+	Attempted    bool   `json:"attempted"`
+	Endpoint     string `json:"endpoint,omitempty"`
+	HealthURL    string `json:"healthUrl,omitempty"`
+	HealthStatus int    `json:"healthStatus,omitempty"`
+	OK           bool   `json:"ok"`
+	Error        string `json:"error,omitempty"`
 }
 
 type DeepPolicyBundle struct {
@@ -708,11 +712,74 @@ func probeBrowserBridge(cfg config.BrowserBridgeConfig) DeepBrowserBridge {
 		}
 	}
 	_ = conn.Close()
-	return DeepBrowserBridge{
-		Attempted: true,
-		Endpoint:  endpoint,
-		OK:        true,
+
+	healthURL, healthErr := browserBridgeHealthURL(endpoint)
+	if healthErr != nil {
+		return DeepBrowserBridge{
+			Attempted: true,
+			Endpoint:  endpoint,
+			OK:        false,
+			Error:     healthErr.Error(),
+		}
 	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, reqErr := client.Get(healthURL)
+	if reqErr != nil {
+		return DeepBrowserBridge{
+			Attempted: true,
+			Endpoint:  endpoint,
+			HealthURL: healthURL,
+			OK:        false,
+			Error:     reqErr.Error(),
+		}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return DeepBrowserBridge{
+			Attempted:    true,
+			Endpoint:     endpoint,
+			HealthURL:    healthURL,
+			HealthStatus: resp.StatusCode,
+			OK:           false,
+			Error:        fmt.Sprintf("health probe returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body))),
+		}
+	}
+	return DeepBrowserBridge{
+		Attempted:    true,
+		Endpoint:     endpoint,
+		HealthURL:    healthURL,
+		HealthStatus: resp.StatusCode,
+		OK:           true,
+	}
+}
+
+func browserBridgeHealthURL(endpoint string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil {
+		return "", err
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "ws":
+		parsed.Scheme = "http"
+	case "wss":
+		parsed.Scheme = "https"
+	case "http", "https":
+	default:
+		if parsed.Scheme == "" {
+			parsed.Scheme = "http"
+		}
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	path := strings.TrimRight(parsed.Path, "/")
+	if path == "" {
+		path = "/health"
+	} else {
+		path += "/health"
+	}
+	parsed.Path = path
+	return parsed.String(), nil
 }
 
 func probePolicyBundle(policyBundlePath string) DeepPolicyBundle {

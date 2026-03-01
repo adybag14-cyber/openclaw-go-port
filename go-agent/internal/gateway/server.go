@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -70,6 +71,11 @@ type Server struct {
 }
 
 func New(cfg config.Config, build buildinfo.Info) *Server {
+	webLoginTTL := time.Duration(cfg.Runtime.WebLoginTTLMinutes) * time.Minute
+	if webLoginTTL <= 0 {
+		webLoginTTL = 10 * time.Minute
+	}
+
 	s := &Server{
 		cfg:       cfg,
 		build:     build,
@@ -115,7 +121,7 @@ func New(cfg config.Config, build buildinfo.Info) *Server {
 		compat:   newCompatState(),
 		routines: routines.NewManager(),
 		wasm:     wasmruntime.NewRuntime(),
-		webLogin: webbridge.NewManager(10 * time.Minute),
+		webLogin: webbridge.NewManager(webLoginTTL),
 		edge:     newEdgeState(),
 	}
 
@@ -675,7 +681,7 @@ func (s *Server) handleOAuthLogout(params map[string]any) map[string]any {
 }
 
 func (s *Server) enqueueRuntimeRequest(requestID string, canonical string, params map[string]any) (map[string]any, *dispatchError) {
-	if canonical == "browser.request" || canonical == "browser.open" {
+	if (canonical == "browser.request" || canonical == "browser.open") && browserRequestRequiresAuthorizedSession(params) {
 		loginID := strings.TrimSpace(toString(params["loginSessionId"], ""))
 		if loginID != "" {
 			if !s.webLogin.IsAuthorized(loginID) {
@@ -718,6 +724,68 @@ func (s *Server) enqueueRuntimeRequest(requestID string, canonical string, param
 		"jobId":    job.ID,
 		"state":    job.State,
 	}, nil
+}
+
+func browserRequestRequiresAuthorizedSession(params map[string]any) bool {
+	provider := inferBrowserProvider(params)
+	if provider == "" {
+		return true
+	}
+	entry, ok := resolveOAuthProviderCatalogEntry(provider)
+	if !ok {
+		return true
+	}
+	return entry.SupportsBrowserSession
+}
+
+func inferBrowserProvider(params map[string]any) string {
+	provider := normalizeProviderID(toString(params["provider"], ""))
+	if provider != "" {
+		return provider
+	}
+
+	model := strings.TrimSpace(toString(params["model"], ""))
+	if model != "" {
+		if candidate, _, ok := strings.Cut(model, "/"); ok {
+			provider = normalizeProviderID(candidate)
+			if provider != "" {
+				return provider
+			}
+		}
+	}
+
+	rawURL := strings.TrimSpace(toString(params["url"], ""))
+	if rawURL != "" {
+		if hostProvider := providerFromURL(rawURL); hostProvider != "" {
+			return hostProvider
+		}
+	}
+
+	return "chatgpt"
+}
+
+func providerFromURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	switch {
+	case strings.Contains(host, "chatgpt.com"):
+		return "chatgpt"
+	case strings.Contains(host, "chat.qwen.ai"):
+		return "qwen"
+	case strings.Contains(host, "chat.z.ai"):
+		return "zai"
+	case strings.Contains(host, "inceptionlabs.ai"):
+		return "inception"
+	case strings.Contains(host, "openrouter.ai"):
+		return "openrouter"
+	case strings.Contains(host, "opencode.ai"):
+		return "opencode"
+	default:
+		return ""
+	}
 }
 
 func (s *Server) handleAgentWait(ctx context.Context, params map[string]any) (map[string]any, *dispatchError) {

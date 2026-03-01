@@ -5,6 +5,35 @@
 ### Highlights
 - No unreleased changes.
 
+## v2.10.2-go - 2026-03-01
+
+### Highlights
+- Hardened browser-session auth behavior for provider-aware bridge routing:
+  - `browser.request` auth gating now only enforces active web login for browser-session providers (`chatgpt`, `qwen`, `zai`, `inception`) instead of all requests.
+  - provider inference now covers explicit provider, model-prefix provider, and URL-host provider resolution.
+- Expanded keyless alias support for free-browser chat providers:
+  - added `glm/glm5/glm-5` canonicalization to `zai`.
+  - kept `mercury/mercury2` canonicalization to `inception`.
+  - applied consistently across gateway provider catalog, web login manager, tool runtime, and browser bridge script.
+- Improved operator auth stability:
+  - added configurable web-login TTL (`runtime.web_login_ttl_minutes`, env `OPENCLAW_GO_WEB_LOGIN_TTL_MINUTES`) with default `1440` minutes.
+- Improved diagnostics depth:
+  - deep security audit browser probe now performs `/health` HTTP checks and reports status/body context.
+  - doctor deep checks now detect conflicting systemd unit activation across user/system scopes for bridge/runtime units.
+- Browser bridge updates:
+  - provider-profile routing in `chatgpt-browser-bridge.mjs` for `chatgpt`, `qwen`, `zai` (GLM), and `inception` (Mercury).
+  - `/health` now exposes provider catalog plus engine/lightpanda readiness metadata.
+
+### Validation
+- `node --check scripts/chatgpt-browser-bridge.mjs`
+- Dockerized formatting + validation:
+  - `go fmt ./...`
+  - `go test ./...`
+  - `go vet ./...`
+- Browser bridge smoke:
+  - `GET /health` in default mode (`playwright,puppeteer`)
+  - `GET /health` with Lightpanda env (`lightpanda-playwright,lightpanda-puppeteer,playwright,puppeteer`)
+
 ## v2.10.0-go - 2026-03-01
 
 ### Highlights

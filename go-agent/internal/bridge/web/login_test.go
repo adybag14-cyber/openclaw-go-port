@@ -79,6 +79,8 @@ func TestProviderVerificationURI(t *testing.T) {
 		{provider: "qwen", prefix: "https://chat.qwen.ai/"},
 		{provider: "qwen-cli", prefix: "https://chat.qwen.ai/"},
 		{provider: "copaw", prefix: "https://chat.qwen.ai/"},
+		{provider: "mercury2", prefix: "https://chat.inceptionlabs.ai/"},
+		{provider: "glm-5", prefix: "https://chat.z.ai/"},
 		{provider: "gemini", prefix: "https://aistudio.google.com/"},
 		{provider: "claude", prefix: "https://claude.ai/"},
 	}

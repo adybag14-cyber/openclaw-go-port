@@ -660,6 +660,12 @@ func TestNormalizeBrowserProviderAliasIncludesCopaw(t *testing.T) {
 	if got := normalizeBrowserProviderAlias("copaw"); got != "qwen" {
 		t.Fatalf("expected copaw -> qwen, got %q", got)
 	}
+	if got := normalizeBrowserProviderAlias("glm5"); got != "zai" {
+		t.Fatalf("expected glm5 -> zai, got %q", got)
+	}
+	if got := normalizeBrowserProviderAlias("mercury2"); got != "inception" {
+		t.Fatalf("expected mercury2 -> inception, got %q", got)
+	}
 	if got := normalizeBrowserProviderAlias("openai-codex"); got != "codex" {
 		t.Fatalf("expected openai-codex -> codex, got %q", got)
 	}

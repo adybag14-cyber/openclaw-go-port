@@ -1105,7 +1105,7 @@ func normalizeBrowserProviderAlias(provider string) string {
 		return "opencode"
 	case "zhipu", "zhipu-ai", "bigmodel", "bigmodel-cn", "zhipuai-coding", "zhipu-coding":
 		return "zhipuai"
-	case "z.ai", "z-ai", "zaiweb", "zai-web":
+	case "z.ai", "z-ai", "zaiweb", "zai-web", "glm", "glm5", "glm-5":
 		return "zai"
 	case "inception-labs", "inceptionlabs", "mercury", "mercury2", "mercury-2":
 		return "inception"

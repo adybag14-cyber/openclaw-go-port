@@ -2,7 +2,7 @@
 
 OpenClaw is now fully ported to Go in this repository.
 
-Current release: `v2.10.1-go`
+Current release: `v2.10.2-go`
 
 ## Status
 
@@ -134,14 +134,14 @@ Lightpanda is wired as an optional backend with automatic fallback to Playwright
 
 ```powershell
 Set-Location go-agent
-./scripts/build-matrix.ps1 -Version 2.10.0 -OutputDir ../dist/release-v2.10.0-go-assets
+./scripts/build-matrix.ps1 -Version 2.10.2 -OutputDir ../dist/release-v2.10.2-go-assets
 ```
 
 ### POSIX shell
 
 ```bash
 cd go-agent
-sh ./scripts/build-matrix.sh 2.10.0 ../dist/release-v2.10.0-go-assets
+sh ./scripts/build-matrix.sh 2.10.2 ../dist/release-v2.10.2-go-assets
 ```
 
 Outputs:
@@ -162,9 +162,9 @@ Build defaults:
 
 ```powershell
 git push origin main
-git tag v2.10.0-go
-git push origin v2.10.0-go
-gh release create v2.10.0-go dist/release-v2.10.0-go-assets/openclaw-go-windows-amd64.exe dist/release-v2.10.0-go-assets/openclaw-go-windows-arm64.exe dist/release-v2.10.0-go-assets/openclaw-go-linux-amd64 dist/release-v2.10.0-go-assets/openclaw-go-linux-arm64 dist/release-v2.10.0-go-assets/openclaw-go-darwin-amd64 dist/release-v2.10.0-go-assets/openclaw-go-darwin-arm64 dist/release-v2.10.0-go-assets/openclaw-go-android-arm64 dist/release-v2.10.0-go-assets/SHA256SUMS.txt -R adybag14-cyber/openclaw-go-port --title "OpenClaw Go v2.10.0" --notes-file docs/go-port/release-v2.10.0-go.md
+git tag v2.10.2-go
+git push origin v2.10.2-go
+gh release create v2.10.2-go dist/release-v2.10.2-go-assets/openclaw-go-windows-amd64.exe dist/release-v2.10.2-go-assets/openclaw-go-windows-arm64.exe dist/release-v2.10.2-go-assets/openclaw-go-linux-amd64 dist/release-v2.10.2-go-assets/openclaw-go-linux-arm64 dist/release-v2.10.2-go-assets/openclaw-go-darwin-amd64 dist/release-v2.10.2-go-assets/openclaw-go-darwin-arm64 dist/release-v2.10.2-go-assets/openclaw-go-android-arm64 dist/release-v2.10.2-go-assets/SHA256SUMS.txt -R adybag14-cyber/openclaw-go-port --title "OpenClaw Go v2.10.2" --notes-file docs/go-port/release-v2.10.2-go.md
 ```
 
 ## Telegram and Auth Flows
@@ -220,7 +220,7 @@ auth_prefix = "Bearer"
 
 ## Additional Docs
 
-- Go release notes: `docs/go-port/release-v2.10.0-go.md`
+- Go release notes: `docs/go-port/release-v2.10.2-go.md`
 - Port plan: `docs/GO_PORT_PLAN.md`
 - Phase checklist: `docs/go-port/phase-checklist.md`
 - Go changelog entries: `CHANGELOG.md`

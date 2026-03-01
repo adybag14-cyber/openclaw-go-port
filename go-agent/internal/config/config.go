@@ -16,6 +16,7 @@ const (
 	defaultAuthMode                      = "auto"
 	defaultStatePath                     = "memory://openclaw-go-state"
 	defaultProfile                       = "core"
+	defaultWebLoginTTLMinutes            = 1440
 	defaultBrowserBridgeEndpoint         = "http://127.0.0.1:43010"
 	defaultBrowserBridgeRequestTimeoutMs = 180000
 	defaultBrowserBridgeRetries          = 2
@@ -45,10 +46,11 @@ type GatewayServerConfig struct {
 }
 
 type RuntimeConfig struct {
-	AuditOnly     bool                `toml:"audit_only"`
-	StatePath     string              `toml:"state_path"`
-	Profile       string              `toml:"profile"`
-	BrowserBridge BrowserBridgeConfig `toml:"browser_bridge"`
+	AuditOnly          bool                `toml:"audit_only"`
+	StatePath          string              `toml:"state_path"`
+	Profile            string              `toml:"profile"`
+	WebLoginTTLMinutes int                 `toml:"web_login_ttl_minutes"`
+	BrowserBridge      BrowserBridgeConfig `toml:"browser_bridge"`
 }
 
 type BrowserBridgeConfig struct {
@@ -128,9 +130,10 @@ func Default() Config {
 			},
 		},
 		Runtime: RuntimeConfig{
-			AuditOnly: false,
-			StatePath: defaultStatePath,
-			Profile:   defaultProfile,
+			AuditOnly:          false,
+			StatePath:          defaultStatePath,
+			Profile:            defaultProfile,
+			WebLoginTTLMinutes: defaultWebLoginTTLMinutes,
 			BrowserBridge: BrowserBridgeConfig{
 				Enabled:              true,
 				Endpoint:             defaultBrowserBridgeEndpoint,
@@ -233,6 +236,7 @@ func applyEnvOverrides(cfg *Config) {
 	setIfPresent("OPENCLAW_GO_GATEWAY_AUTH_MODE", &cfg.Gateway.Server.AuthMode)
 	setIfPresent("OPENCLAW_GO_STATE_PATH", &cfg.Runtime.StatePath)
 	setIfPresent("OPENCLAW_GO_RUNTIME_PROFILE", &cfg.Runtime.Profile)
+	setIntIfPresent("OPENCLAW_GO_WEB_LOGIN_TTL_MINUTES", &cfg.Runtime.WebLoginTTLMinutes)
 	setBoolIfPresent("OPENCLAW_GO_BROWSER_BRIDGE_ENABLED", &cfg.Runtime.BrowserBridge.Enabled)
 	setIfPresent("OPENCLAW_GO_BROWSER_BRIDGE_ENDPOINT", &cfg.Runtime.BrowserBridge.Endpoint)
 	setIntIfPresent("OPENCLAW_GO_BROWSER_BRIDGE_REQUEST_TIMEOUT_MS", &cfg.Runtime.BrowserBridge.RequestTimeoutMs)
@@ -321,6 +325,9 @@ func validate(cfg Config) error {
 	case "core", "edge":
 	default:
 		return errors.New("runtime.profile must be one of: core, edge")
+	}
+	if cfg.Runtime.WebLoginTTLMinutes <= 0 {
+		return errors.New("runtime.web_login_ttl_minutes must be > 0")
 	}
 	if cfg.Runtime.BrowserBridge.Enabled && strings.TrimSpace(cfg.Runtime.BrowserBridge.Endpoint) == "" {
 		return errors.New("runtime.browser_bridge.endpoint cannot be empty when browser bridge is enabled")

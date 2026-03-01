@@ -444,6 +444,155 @@ func TestWebLoginAndBrowserCompletionBridgeFlow(t *testing.T) {
 	}
 }
 
+func TestBrowserRequestProviderAwareAuthGate(t *testing.T) {
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected bridge request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cmpl-gate-1","model":"provider-check","choices":[{"message":{"role":"assistant","content":"gate ok"}}]}`))
+	}))
+	defer bridge.Close()
+
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-browser-provider-gate"
+	cfg.Runtime.BrowserBridge.Enabled = true
+	cfg.Runtime.BrowserBridge.Endpoint = bridge.URL
+	cfg.Runtime.BrowserBridge.RequestTimeoutMs = 3000
+	cfg.Runtime.BrowserBridge.Retries = 0
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	// Providers without browser-session auth requirements should run without prior login.
+	opencodeReq := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "browser-opencode-no-auth",
+		"method": "browser.request",
+		"params": map[string]any{
+			"provider": "opencode",
+			"model":    "opencode/kimi-k2.5-free",
+			"messages": []map[string]any{{"role": "user", "content": "ping"}},
+		},
+	})
+	opencodeResult := assertRPCResult(t, opencodeReq)
+	opencodeJobID, _ := opencodeResult["jobId"].(string)
+	if opencodeJobID == "" {
+		t.Fatalf("expected browser.request opencode job id")
+	}
+	waitOpencode := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "browser-opencode-no-auth-wait",
+		"method": "agent.wait",
+		"params": map[string]any{
+			"jobId":     opencodeJobID,
+			"timeoutMs": 3000,
+		},
+	})
+	waitOpencodeResult := assertRPCResult(t, waitOpencode)
+	waitOpencodePayload, _ := waitOpencodeResult["result"].(map[string]any)
+	waitOpencodeOutput, _ := waitOpencodePayload["output"].(map[string]any)
+	if toString(waitOpencodeOutput["assistantText"], "") != "gate ok" {
+		t.Fatalf("expected opencode bridge response to complete without login")
+	}
+
+	// Provider inferred from model prefix should also bypass browser-session auth if catalog allows it.
+	opencodePrefixReq := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "browser-opencode-model-prefix-no-auth",
+		"method": "browser.request",
+		"params": map[string]any{
+			"model": "opencode/kimi-k2.5-free",
+			"messages": []map[string]any{
+				{"role": "user", "content": "ping with model prefix"},
+			},
+		},
+	})
+	opencodePrefixResult := assertRPCResult(t, opencodePrefixReq)
+	if toString(opencodePrefixResult["jobId"], "") == "" {
+		t.Fatalf("expected browser.request model-prefix opencode job id")
+	}
+
+	// Providers marked browser-session-backed must still require authorized login.
+	qwenBlocked := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "browser-qwen-no-auth",
+		"method": "browser.request",
+		"params": map[string]any{
+			"provider": "qwen",
+			"model":    "qwen3.5-plus",
+			"messages": []map[string]any{{"role": "user", "content": "ping"}},
+		},
+	})
+	assertRPCErrorCode(t, qwenBlocked, -32040)
+
+	start := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "qwen-login-start",
+		"method": "web.login.start",
+		"params": map[string]any{
+			"provider": "qwen",
+			"model":    "qwen3.5-plus",
+		},
+	})
+	startResult := assertRPCResult(t, start)
+	loginObj, _ := startResult["login"].(map[string]any)
+	loginID, _ := loginObj["loginSessionId"].(string)
+	loginCode, _ := loginObj["code"].(string)
+	if loginID == "" {
+		t.Fatalf("expected loginSessionId for qwen")
+	}
+
+	complete := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "qwen-login-complete",
+		"method": "auth.oauth.complete",
+		"params": map[string]any{
+			"loginSessionId": loginID,
+			"code":           loginCode,
+		},
+	})
+	completeResult := assertRPCResult(t, complete)
+	completeLogin, _ := completeResult["login"].(map[string]any)
+	if completeLogin["status"] != "authorized" {
+		t.Fatalf("expected authorized qwen login, got %v", completeLogin["status"])
+	}
+
+	qwenAllowed := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "browser-qwen-auth",
+		"method": "browser.request",
+		"params": map[string]any{
+			"provider": "qwen",
+			"model":    "qwen3.5-plus",
+			"messages": []map[string]any{{"role": "user", "content": "post-auth ping"}},
+		},
+	})
+	qwenAllowedResult := assertRPCResult(t, qwenAllowed)
+	qwenJobID, _ := qwenAllowedResult["jobId"].(string)
+	if qwenJobID == "" {
+		t.Fatalf("expected qwen browser.request job id after auth")
+	}
+	waitQwen := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "browser-qwen-auth-wait",
+		"method": "agent.wait",
+		"params": map[string]any{
+			"jobId":     qwenJobID,
+			"timeoutMs": 3000,
+		},
+	})
+	waitQwenResult := assertRPCResult(t, waitQwen)
+	waitQwenPayload, _ := waitQwenResult["result"].(map[string]any)
+	waitQwenOutput, _ := waitQwenPayload["output"].(map[string]any)
+	if toString(waitQwenOutput["assistantText"], "") != "gate ok" {
+		t.Fatalf("expected qwen bridge response after auth")
+	}
+}
+
 func TestBrowserRequestHonorsSpecifiedLoginSessionAuthorization(t *testing.T) {
 	cfg := config.Default()
 	cfg.Runtime.StatePath = "memory://test-browser-login-session-check"

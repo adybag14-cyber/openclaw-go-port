@@ -12,6 +12,7 @@ auth_mode = "auto"
 audit_only = false
 state_path = "memory://openclaw-go-state"
 profile = "core"
+web_login_ttl_minutes = 1440
 
 [channels.telegram]
 bot_token = ""

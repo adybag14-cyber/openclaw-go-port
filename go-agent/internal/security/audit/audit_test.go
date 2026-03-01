@@ -2,6 +2,8 @@ package audit
 
 import (
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -95,15 +97,19 @@ func TestRunReportsTelemetryAndAttestationPostureFindings(t *testing.T) {
 }
 
 func TestRunDeepBrowserBridgeProbe(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to bind local listener: %v", err)
-	}
-	defer listener.Close()
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer bridge.Close()
 
 	cfg := config.Default()
 	cfg.Runtime.BrowserBridge.Enabled = true
-	cfg.Runtime.BrowserBridge.Endpoint = "http://" + listener.Addr().String()
+	cfg.Runtime.BrowserBridge.Endpoint = bridge.URL
 
 	report := Run(cfg, Options{Deep: true})
 	if report.Deep == nil {
@@ -111,6 +117,9 @@ func TestRunDeepBrowserBridgeProbe(t *testing.T) {
 	}
 	if !report.Deep.BrowserBridge.OK {
 		t.Fatalf("expected deep browser bridge probe to pass, got error=%s", report.Deep.BrowserBridge.Error)
+	}
+	if report.Deep.BrowserBridge.HealthStatus != http.StatusOK {
+		t.Fatalf("expected deep browser bridge health status 200, got %d", report.Deep.BrowserBridge.HealthStatus)
 	}
 }
 

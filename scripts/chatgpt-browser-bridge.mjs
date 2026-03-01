@@ -12,7 +12,7 @@ const PORT = Number.parseInt(process.env.OPENCLAW_CHATGPT_BRIDGE_PORT || "43010"
 const PROFILE_DIR =
   process.env.OPENCLAW_CHATGPT_PROFILE_DIR ||
   path.join(".openclaw-rs", "chatgpt-browser-profile");
-const BASE_ORIGIN = "https://chatgpt.com";
+const DEFAULT_PROVIDER = "chatgpt";
 const DEFAULT_MODEL = "gpt-5-2";
 const COMPLETION_TIMEOUT_MS = Number.parseInt(
   process.env.OPENCLAW_CHATGPT_COMPLETION_TIMEOUT_MS || "180000",
@@ -37,6 +37,117 @@ let lpwState = null;
 let lppState = null;
 let lpwInitError = null;
 let lppInitError = null;
+
+const PROVIDER_PROFILES = {
+  chatgpt: {
+    id: "chatgpt",
+    origin: "https://chatgpt.com",
+    supportsModeToggle: true,
+    requireSessionProbe: true,
+    queryModel: true,
+    composerSelectors: [
+      "#prompt-textarea",
+      "textarea#prompt-textarea",
+      "textarea",
+      '[contenteditable="true"]',
+    ],
+    assistantSelectors: [
+      '[data-message-author-role="assistant"]',
+      '[data-author-role="assistant"]',
+      "article[data-testid*='conversation-turn'] [data-message-author-role='assistant']",
+      ".markdown.prose",
+    ],
+    stopSelectors: [
+      'button[data-testid="stop-button"]',
+      'button[aria-label*="Stop"]',
+      'button[aria-label*="stop"]',
+    ],
+  },
+  qwen: {
+    id: "qwen",
+    origin: "https://chat.qwen.ai",
+    supportsModeToggle: false,
+    requireSessionProbe: false,
+    queryModel: false,
+    composerSelectors: [
+      "textarea",
+      '[role="textbox"]',
+      '[contenteditable="true"]',
+      'div[contenteditable="true"]',
+    ],
+    assistantSelectors: [
+      '[data-message-author-role="assistant"]',
+      '[data-author-role="assistant"]',
+      '[data-role="assistant"]',
+      ".assistant",
+      ".message.assistant",
+      "main article",
+      ".markdown",
+      ".prose",
+    ],
+    stopSelectors: [
+      'button[aria-label*="Stop"]',
+      'button[aria-label*="Generating"]',
+      'button[aria-label*="thinking"]',
+    ],
+  },
+  zai: {
+    id: "zai",
+    origin: "https://chat.z.ai",
+    supportsModeToggle: false,
+    requireSessionProbe: false,
+    queryModel: false,
+    composerSelectors: [
+      "textarea",
+      '[role="textbox"]',
+      '[contenteditable="true"]',
+      'div[contenteditable="true"]',
+    ],
+    assistantSelectors: [
+      '[data-message-author-role="assistant"]',
+      '[data-author-role="assistant"]',
+      '[data-role="assistant"]',
+      ".assistant",
+      ".message.assistant",
+      "main article",
+      ".markdown",
+      ".prose",
+    ],
+    stopSelectors: [
+      'button[aria-label*="Stop"]',
+      'button[aria-label*="Generating"]',
+      'button[aria-label*="thinking"]',
+    ],
+  },
+  inception: {
+    id: "inception",
+    origin: "https://chat.inceptionlabs.ai",
+    supportsModeToggle: false,
+    requireSessionProbe: false,
+    queryModel: false,
+    composerSelectors: [
+      "textarea",
+      '[role="textbox"]',
+      '[contenteditable="true"]',
+      'div[contenteditable="true"]',
+    ],
+    assistantSelectors: [
+      '[data-message-author-role="assistant"]',
+      '[data-author-role="assistant"]',
+      '[data-role="assistant"]',
+      ".assistant",
+      ".message.assistant",
+      "main article",
+      ".markdown",
+      ".prose",
+    ],
+    stopSelectors: [
+      'button[aria-label*="Stop"]',
+      'button[aria-label*="Generating"]',
+      'button[aria-label*="thinking"]',
+    ],
+  },
+};
 
 function parseJsonSafe(text) {
   try {
@@ -184,6 +295,111 @@ function stripProviderPrefix(model) {
   return parts[parts.length - 1] || raw;
 }
 
+function normalizeProviderAlias(rawProvider) {
+  const normalized = trimText(rawProvider).toLowerCase().replaceAll("_", "-");
+  switch (normalized) {
+    case "":
+    case "openai":
+    case "openai-chatgpt":
+    case "chatgpt-web":
+    case "chatgpt.com":
+      return "chatgpt";
+    case "openai-codex":
+    case "codex-cli":
+    case "openai-codex-cli":
+      return "chatgpt";
+    case "qwen-portal":
+    case "qwen-cli":
+    case "qwen-chat":
+    case "qwen35":
+    case "qwen3.5":
+    case "qwen-3.5":
+    case "copaw":
+    case "qwen-copaw":
+    case "qwen-agent":
+      return "qwen";
+    case "z.ai":
+    case "z-ai":
+    case "zaiweb":
+    case "zai-web":
+    case "glm":
+    case "glm5":
+    case "glm-5":
+    case "zhipu":
+    case "zhipuai":
+      return "zai";
+    case "inception-labs":
+    case "inceptionlabs":
+    case "mercury":
+    case "mercury2":
+    case "mercury-2":
+      return "inception";
+    default:
+      return normalized || DEFAULT_PROVIDER;
+  }
+}
+
+function providerFromURL(rawURL) {
+  const value = trimText(rawURL);
+  if (!value) {
+    return null;
+  }
+  let host = "";
+  try {
+    host = new URL(value).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (host.includes("chatgpt.com") || host.includes("chat.openai.com")) {
+    return "chatgpt";
+  }
+  if (host.includes("chat.qwen.ai")) {
+    return "qwen";
+  }
+  if (host.includes("chat.z.ai") || host.includes("bigmodel.cn")) {
+    return "zai";
+  }
+  if (host.includes("inceptionlabs.ai")) {
+    return "inception";
+  }
+  return null;
+}
+
+function inferProviderFromPayload(payload) {
+  const direct = normalizeProviderAlias(payload?.provider);
+  if (direct && direct !== DEFAULT_PROVIDER) {
+    return direct;
+  }
+  const modelValue = trimText(payload?.model);
+  if (modelValue.includes("/")) {
+    const prefix = modelValue.split("/")[0];
+    const modelProvider = normalizeProviderAlias(prefix);
+    if (modelProvider) {
+      return modelProvider;
+    }
+  }
+  const urlFields = [
+    payload?.url,
+    payload?.baseUrl,
+    payload?.base_url,
+    payload?.apiBase,
+    payload?.api_base,
+    payload?.endpoint,
+  ];
+  for (const candidate of urlFields) {
+    const fromURL = providerFromURL(candidate);
+    if (fromURL) {
+      return fromURL;
+    }
+  }
+  return direct || DEFAULT_PROVIDER;
+}
+
+function providerProfileForPayload(payload) {
+  const provider = inferProviderFromPayload(payload);
+  return PROVIDER_PROFILES[provider] || PROVIDER_PROFILES.chatgpt;
+}
+
 function parseBrowserMode(model) {
   const normalized = stripProviderPrefix(model).toLowerCase().replaceAll("_", "-");
   if (!normalized) {
@@ -304,22 +520,30 @@ async function readSessionState(page) {
         status: 0,
         hasAccessToken: false,
         email: null,
-        error: formatError(error),
+        error: String(error && error.message ? error.message : error),
       };
     }
   });
 }
 
-async function waitForComposer(page, timeoutMs = 60_000) {
+async function waitForComposer(page, profile, timeoutMs = 60_000) {
+  const selectors = Array.isArray(profile?.composerSelectors)
+    ? profile.composerSelectors
+    : PROVIDER_PROFILES.chatgpt.composerSelectors;
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    const ready = await page.evaluate(() => {
-      return Boolean(
-        document.querySelector("#prompt-textarea") ||
-          document.querySelector('textarea') ||
-          document.querySelector('[contenteditable="true"]'),
-      );
-    });
+    const ready = await page.evaluate((candidateSelectors) => {
+      for (const selector of candidateSelectors) {
+        if (!selector) {
+          continue;
+        }
+        const node = document.querySelector(selector);
+        if (node) {
+          return true;
+        }
+      }
+      return false;
+    }, selectors);
     if (ready) {
       return true;
     }
@@ -328,7 +552,10 @@ async function waitForComposer(page, timeoutMs = 60_000) {
   return false;
 }
 
-async function applyThinkingModeIfNeeded(page, mode) {
+async function applyThinkingModeIfNeeded(page, profile, mode) {
+  if (!profile?.supportsModeToggle) {
+    return;
+  }
   if (!mode) {
     return;
   }
@@ -379,19 +606,49 @@ async function applyThinkingModeIfNeeded(page, mode) {
   }, mode);
 }
 
-async function submitPromptAndWaitForReply(page, prompt, timeoutMs) {
-  const baseline = await page.evaluate(() => {
-    return {
-      userCount: document.querySelectorAll('[data-message-author-role="user"]').length,
-      assistantCount: document.querySelectorAll('[data-message-author-role="assistant"]').length,
-    };
-  });
+async function submitPromptAndWaitForReply(page, profile, prompt, timeoutMs) {
+  const selectors = {
+    composerSelectors: profile?.composerSelectors || PROVIDER_PROFILES.chatgpt.composerSelectors,
+    assistantSelectors: profile?.assistantSelectors || PROVIDER_PROFILES.chatgpt.assistantSelectors,
+    stopSelectors: profile?.stopSelectors || [],
+  };
 
-  const typed = await page.evaluate((text) => {
-    const composer =
-      document.querySelector("#prompt-textarea") ||
-      document.querySelector('[contenteditable="true"]') ||
-      document.querySelector("textarea");
+  const baselineLastText = await page.evaluate((options) => {
+    const collectAssistantTexts = () => {
+      const values = [];
+      const seen = new Set();
+      for (const selector of options.assistantSelectors || []) {
+        if (!selector) {
+          continue;
+        }
+        const nodes = Array.from(document.querySelectorAll(selector));
+        for (const node of nodes) {
+          const text = (node.innerText || node.textContent || "").trim();
+          if (!text || seen.has(text)) {
+            continue;
+          }
+          seen.add(text);
+          values.push(text);
+        }
+      }
+      return values;
+    };
+    const values = collectAssistantTexts();
+    return values.length > 0 ? values[values.length - 1] : "";
+  }, selectors);
+
+  const typed = await page.evaluate((text, options) => {
+    let composer = null;
+    for (const selector of options.composerSelectors || []) {
+      if (!selector) {
+        continue;
+      }
+      const candidate = document.querySelector(selector);
+      if (candidate) {
+        composer = candidate;
+        break;
+      }
+    }
     if (!composer) {
       return false;
     }
@@ -404,7 +661,7 @@ async function submitPromptAndWaitForReply(page, prompt, timeoutMs) {
     composer.textContent = text;
     composer.dispatchEvent(new InputEvent("input", { bubbles: true }));
     return true;
-  }, prompt);
+  }, prompt, selectors);
 
   if (!typed) {
     throw new Error("composer not available for prompt submit");
@@ -417,27 +674,42 @@ async function submitPromptAndWaitForReply(page, prompt, timeoutMs) {
   let stableTicks = 0;
   while (Date.now() - started < timeoutMs) {
     await sleep(900);
-    const state = await page.evaluate((baselineAssistantCount) => {
-      const assistants = Array.from(
-        document.querySelectorAll('[data-message-author-role="assistant"]'),
-      )
-        .map((element) => (element.innerText || "").trim())
-        .filter((text) => Boolean(text));
-      const lastText = assistants.length > 0 ? assistants[assistants.length - 1] : "";
-      const stopVisible = Boolean(
-        document.querySelector('button[data-testid="stop-button"]') ||
-          document.querySelector('button[aria-label*="Stop"]') ||
-          document.querySelector('button[aria-label*="stop"]'),
-      );
+    const state = await page.evaluate((options) => {
+      const values = [];
+      const seen = new Set();
+      for (const selector of options.assistantSelectors || []) {
+        if (!selector) {
+          continue;
+        }
+        const nodes = Array.from(document.querySelectorAll(selector));
+        for (const node of nodes) {
+          const text = (node.innerText || node.textContent || "").trim();
+          if (!text || seen.has(text)) {
+            continue;
+          }
+          seen.add(text);
+          values.push(text);
+        }
+      }
+      let stopVisible = false;
+      for (const selector of options.stopSelectors || []) {
+        if (!selector) {
+          continue;
+        }
+        if (document.querySelector(selector)) {
+          stopVisible = true;
+          break;
+        }
+      }
       return {
-        assistantCount: assistants.length,
-        hasNewAssistant: assistants.length > baselineAssistantCount,
-        lastText,
+        texts: values,
+        lastText: values.length > 0 ? values[values.length - 1] : "",
         stopVisible,
       };
-    }, baseline.assistantCount);
+    }, selectors);
 
-    if (!state.hasNewAssistant || !state.lastText) {
+    const hasNewAssistant = Boolean(state.lastText) && state.lastText !== baselineLastText;
+    if (!hasNewAssistant || !state.lastText) {
       continue;
     }
     if (state.lastText === stableText) {
@@ -458,39 +730,46 @@ async function completeViaPage(page, payload) {
   if (!prompt) {
     throw new Error("no user prompt provided");
   }
+  const profile = providerProfileForPayload(payload);
   const requestedModel = trimText(payload.model) || DEFAULT_MODEL;
   const modelSlug = normalizeModelSlug(requestedModel);
   const mode = parseBrowserMode(requestedModel);
 
-  await page.goto(`${BASE_ORIGIN}/?model=${encodeURIComponent(modelSlug)}`, {
+  const baseURL = profile.queryModel
+    ? `${profile.origin}/?model=${encodeURIComponent(modelSlug)}`
+    : `${profile.origin}/`;
+  await page.goto(baseURL, {
     waitUntil: "domcontentloaded",
     timeout: 60_000,
   });
 
-  const composerReady = await waitForComposer(page, 60_000);
+  const composerReady = await waitForComposer(page, profile, 60_000);
   if (!composerReady) {
-    throw new Error("chat composer not ready");
+    throw new Error(`${profile.id} chat composer not ready`);
   }
 
-  const sessionState = await readSessionState(page);
-  if (!sessionState.ok) {
-    throw new Error(
-      `chatgpt session unavailable (status=${sessionState.status}, hasToken=${sessionState.hasAccessToken})`,
-    );
+  if (profile.requireSessionProbe) {
+    const sessionState = await readSessionState(page);
+    if (!sessionState.ok) {
+      throw new Error(
+        `${profile.id} session unavailable (status=${sessionState.status}, hasToken=${sessionState.hasAccessToken})`,
+      );
+    }
   }
 
-  await applyThinkingModeIfNeeded(page, mode);
+  await applyThinkingModeIfNeeded(page, profile, mode);
   const assistantText = await submitPromptAndWaitForReply(
     page,
+    profile,
     prompt,
     Math.max(20_000, COMPLETION_TIMEOUT_MS),
   );
 
   return {
-    id: `chatcmpl-chatgpt-browser-${Date.now()}`,
+    id: `chatcmpl-${profile.id}-browser-${Date.now()}`,
     object: "chat.completion",
     created: Math.floor(Date.now() / 1000),
-    model: modelSlug,
+    model: requestedModel,
     choices: [
       {
         index: 0,
@@ -796,6 +1075,7 @@ const server = http.createServer(async (req, res) => {
       writeJson(res, 200, {
         ok: true,
         bridge: "chatgpt-browser-bridge",
+        providers: Object.keys(PROVIDER_PROFILES),
         engineOrder: ENGINE_ORDER,
         lightpandaConfigured: Boolean(LIGHTPANDA_ENDPOINT),
         lightpandaPlaywrightReady: Boolean(lpwState),

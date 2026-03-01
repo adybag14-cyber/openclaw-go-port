@@ -26,6 +26,9 @@ func TestLoadDefaultsWhenConfigMissing(t *testing.T) {
 	if cfg.Runtime.Profile != defaultProfile {
 		t.Fatalf("unexpected default runtime.profile: %s", cfg.Runtime.Profile)
 	}
+	if cfg.Runtime.WebLoginTTLMinutes != defaultWebLoginTTLMinutes {
+		t.Fatalf("unexpected default runtime.web_login_ttl_minutes: %d", cfg.Runtime.WebLoginTTLMinutes)
+	}
 	if !cfg.Runtime.BrowserBridge.Enabled {
 		t.Fatalf("expected default runtime.browser_bridge.enabled=true")
 	}
@@ -89,6 +92,7 @@ auth_mode = "token"
 audit_only = true
 state_path = "tmp/openclaw-go-state.json"
 profile = "edge"
+web_login_ttl_minutes = 45
 
 [security]
 default_action = "review"
@@ -106,6 +110,7 @@ policy_bundle_path = "tmp/policy-bundle.json"
 
 	t.Setenv("OPENCLAW_GO_HTTP_BIND", "127.0.0.1:7654")
 	t.Setenv("OPENCLAW_GO_STATE_PATH", "tmp/override-state.json")
+	t.Setenv("OPENCLAW_GO_WEB_LOGIN_TTL_MINUTES", "180")
 	t.Setenv("OPENCLAW_GO_TELEGRAM_BOT_TOKEN", "tg-token")
 	t.Setenv("OPENCLAW_GO_POLICY_BUNDLE_PATH", "tmp/policy-from-env.json")
 	t.Setenv("OPENCLAW_GO_EDR_TELEMETRY_PATH", "tmp/edr-feed.jsonl")
@@ -144,6 +149,9 @@ policy_bundle_path = "tmp/policy-bundle.json"
 	}
 	if cfg.Runtime.Profile != "edge" {
 		t.Fatalf("runtime.profile expected edge, got %s", cfg.Runtime.Profile)
+	}
+	if cfg.Runtime.WebLoginTTLMinutes != 180 {
+		t.Fatalf("runtime.web_login_ttl_minutes override not applied: %d", cfg.Runtime.WebLoginTTLMinutes)
 	}
 	if cfg.Runtime.BrowserBridge.Enabled {
 		t.Fatalf("browser bridge enabled env override should be false")
@@ -249,6 +257,22 @@ request_timeout_ms = 0
 	_, err := Load(path)
 	if err == nil {
 		t.Fatalf("expected browser bridge validation error")
+	}
+}
+
+func TestWebLoginTTLValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "openclaw-go.toml")
+	content := `
+[runtime]
+web_login_ttl_minutes = 0
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed writing test config: %v", err)
+	}
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatalf("expected runtime.web_login_ttl_minutes validation error")
 	}
 }
 

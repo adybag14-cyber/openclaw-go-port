@@ -1097,3 +1097,31 @@
   - `node --check scripts/chatgpt-browser-auth.mjs`
   - `node --check scripts/chatgpt-browser-bridge.mjs`
   - bridge `/health` smoke in both default and Lightpanda-configured modes.
+
+### Post-v2 Continuation - v2.10.2-go Provider-Aware Keyless Bridge Hardening
+
+- Hardened gateway browser auth gating to only require active login sessions for browser-session providers:
+  - `chatgpt`
+  - `qwen`
+  - `zai`
+  - `inception`
+- Expanded provider inference and alias normalization depth:
+  - model-prefix and URL-host provider detection in gateway/browser bridge paths.
+  - `glm/glm5/glm-5 -> zai`
+  - `mercury/mercury2/mercury-2 -> inception`
+- Added configurable web-login TTL:
+  - config: `runtime.web_login_ttl_minutes`
+  - env: `OPENCLAW_GO_WEB_LOGIN_TTL_MINUTES`
+  - default: `1440` minutes
+- Deep diagnostics parity improvements:
+  - security audit deep browser probe now performs `/health` HTTP checks and includes status/body details.
+  - doctor deep checks now detect conflicting active systemd units across user/system scopes for runtime and bridge services.
+- Browser bridge script improvements:
+  - provider profiles for `chatgpt`, `qwen`, `zai`, `inception`.
+  - `/health` now reports provider catalog plus engine and Lightpanda readiness metadata.
+- Validation completed:
+  - `node --check scripts/chatgpt-browser-bridge.mjs`
+  - `go fmt ./...` (Dockerized)
+  - `go test ./...` (Dockerized)
+  - `go vet ./...` (Dockerized)
+  - bridge `/health` smoke in default and Lightpanda-configured modes.

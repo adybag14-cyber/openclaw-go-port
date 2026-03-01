@@ -20,6 +20,7 @@ func TestNormalizeProviderAliasSupportsExpandedAliases(t *testing.T) {
 		{input: "copaw", expected: "qwen"},
 		{input: "mercury2", expected: "inception"},
 		{input: "z.ai", expected: "zai"},
+		{input: "glm5", expected: "zai"},
 	}
 
 	for _, tc := range cases {
@@ -71,6 +72,28 @@ func TestAuthProviderCatalogPayloadMarksConfiguredAliases(t *testing.T) {
 	}
 	if !foundCopaw {
 		t.Fatalf("expected qwen aliases to include copaw")
+	}
+}
+
+func TestAuthProviderCatalogMarksBrowserSessionProviders(t *testing.T) {
+	entries := authProviderCatalogPayload(nil)
+	if len(entries) == 0 {
+		t.Fatalf("expected non-empty provider catalog")
+	}
+	requiresBrowserSession := map[string]bool{}
+	for _, entry := range entries {
+		providerID := toString(entry["id"], "")
+		supports, _ := entry["supportsBrowserSession"].(bool)
+		requiresBrowserSession[providerID] = supports
+	}
+
+	for _, providerID := range []string{"chatgpt", "qwen", "zai", "inception"} {
+		if !requiresBrowserSession[providerID] {
+			t.Fatalf("expected provider %q to advertise supportsBrowserSession=true", providerID)
+		}
+	}
+	if requiresBrowserSession["opencode"] {
+		t.Fatalf("expected provider opencode to remain api-key / bridge optional without browser-session requirement")
 	}
 }
 

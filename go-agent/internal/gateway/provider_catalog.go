@@ -84,16 +84,16 @@ var oauthProviderCatalog = []oauthProviderCatalogEntry{
 	{
 		ID:                     "zai",
 		DisplayName:            "Z.ai",
-		Aliases:                []string{"z.ai", "z-ai", "zaiweb", "zai-web"},
+		Aliases:                []string{"z.ai", "z-ai", "zaiweb", "zai-web", "glm", "glm5", "glm-5"},
 		VerificationURL:        "https://chat.z.ai/",
-		SupportsBrowserSession: false,
+		SupportsBrowserSession: true,
 	},
 	{
 		ID:                     "inception",
 		DisplayName:            "Inception",
 		Aliases:                []string{"inception-labs", "inceptionlabs", "mercury", "mercury2", "mercury-2"},
 		VerificationURL:        "https://chat.inceptionlabs.ai/",
-		SupportsBrowserSession: false,
+		SupportsBrowserSession: true,
 	},
 }
 
@@ -171,7 +171,7 @@ func normalizeProviderID(value string) string {
 		return "opencode"
 	case "zhipu", "zhipu-ai", "bigmodel", "bigmodel-cn", "zhipuai-coding", "zhipu-coding":
 		return "zhipuai"
-	case "z.ai", "z-ai", "zaiweb", "zai-web":
+	case "z.ai", "z-ai", "zaiweb", "zai-web", "glm", "glm5", "glm-5":
 		return "zai"
 	case "inception-labs", "inceptionlabs", "mercury", "mercury2", "mercury-2":
 		return "inception"
