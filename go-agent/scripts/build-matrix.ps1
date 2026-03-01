@@ -18,7 +18,11 @@ if (-not $outPath) {
 
 $targets = @(
   @{ GOOS = "windows"; GOARCH = "amd64"; Name = "openclaw-go-windows-amd64.exe" },
+  @{ GOOS = "windows"; GOARCH = "arm64"; Name = "openclaw-go-windows-arm64.exe" },
   @{ GOOS = "linux"; GOARCH = "amd64"; Name = "openclaw-go-linux-amd64" },
+  @{ GOOS = "linux"; GOARCH = "arm64"; Name = "openclaw-go-linux-arm64" },
+  @{ GOOS = "darwin"; GOARCH = "amd64"; Name = "openclaw-go-darwin-amd64" },
+  @{ GOOS = "darwin"; GOARCH = "arm64"; Name = "openclaw-go-darwin-arm64" },
   @{ GOOS = "android"; GOARCH = "arm64"; Name = "openclaw-go-android-arm64" }
 )
 
@@ -46,4 +50,3 @@ try {
 finally {
   Pop-Location
 }
-

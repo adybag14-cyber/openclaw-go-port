@@ -19,7 +19,11 @@ build_target() {
 
 cd "${ROOT_DIR}"
 build_target windows amd64 openclaw-go-windows-amd64.exe
+build_target windows arm64 openclaw-go-windows-arm64.exe
 build_target linux amd64 openclaw-go-linux-amd64
+build_target linux arm64 openclaw-go-linux-arm64
+build_target darwin amd64 openclaw-go-darwin-amd64
+build_target darwin arm64 openclaw-go-darwin-arm64
 build_target android arm64 openclaw-go-android-arm64
 
 (
@@ -29,4 +33,3 @@ build_target android arm64 openclaw-go-android-arm64
 
 echo "Release artifacts:"
 ls -lh "${FULL_OUT_DIR}"
-

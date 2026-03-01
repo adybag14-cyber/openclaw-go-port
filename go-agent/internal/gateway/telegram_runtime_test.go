@@ -43,7 +43,7 @@ func TestProcessTelegramUpdateCommandSendsReply(t *testing.T) {
 	update := telegramInboundUpdate{
 		UpdateID: 1,
 		Message: &telegramInboundEntry{
-			Text: "/tts status",
+			Text: "/tts@openclaw_bot status",
 			Chat: telegramInboundChat{ID: 777},
 			From: telegramInboundUser{ID: 11, IsBot: false},
 		},
@@ -119,5 +119,53 @@ func TestProcessTelegramUpdateTextBridgesAssistantReply(t *testing.T) {
 	}
 	if messages[0] != "bridge-response-ok" {
 		t.Fatalf("expected bridged assistant reply, got: %s", messages[0])
+	}
+}
+
+func TestProcessTelegramUpdateStartCommandSendsHelp(t *testing.T) {
+	var mu sync.Mutex
+	messages := make([]string, 0, 4)
+	telegramAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/bottoken/sendMessage" {
+			t.Fatalf("unexpected telegram endpoint: %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]any
+		_ = json.Unmarshal(body, &payload)
+		mu.Lock()
+		messages = append(messages, strings.TrimSpace(toString(payload["text"], "")))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":61,"chat":{"id":999},"date":1700000000}}`))
+	}))
+	defer telegramAPI.Close()
+	t.Setenv("OPENCLAW_GO_TELEGRAM_API_BASE", telegramAPI.URL)
+
+	cfg := config.Default()
+	cfg.Channels.Telegram.BotToken = "token"
+	cfg.Runtime.StatePath = "memory://telegram-runtime-start"
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+
+	update := telegramInboundUpdate{
+		UpdateID: 3,
+		Message: &telegramInboundEntry{
+			Text: "/start",
+			Chat: telegramInboundChat{ID: 999},
+			From: telegramInboundUser{ID: 33, IsBot: false},
+		},
+	}
+	if err := s.processTelegramUpdate(context.Background(), update); err != nil {
+		t.Fatalf("processTelegramUpdate start failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(messages) != 1 {
+		t.Fatalf("expected one outbound telegram message, got %d", len(messages))
+	}
+	if !strings.Contains(messages[0], "Commands: /model, /auth, /set, /tts") {
+		t.Fatalf("expected /start help response, got: %s", messages[0])
 	}
 }

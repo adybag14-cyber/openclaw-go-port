@@ -5,6 +5,34 @@
 ### Highlights
 - No unreleased changes.
 
+## v2.10.0-go - 2026-03-01
+
+### Highlights
+- Hardened Telegram delivery reliability for real chat traffic:
+  - auto-splits oversized replies into Telegram-safe chunks (max 4096 characters per send).
+  - preserves delivery metadata for multipart sends (`chunked`, `chunkCount`, `messageIds`).
+- Expanded Telegram command compatibility:
+  - supports group-suffixed commands such as `/auth@your_bot` and `/tts@your_bot`.
+  - added first-class `/start` and `/help` command responses.
+- Expanded release artifact matrix to cover additional platforms:
+  - `windows/arm64`
+  - `linux/arm64`
+  - `darwin/amd64`
+  - `darwin/arm64`
+  - plus existing `windows/amd64`, `linux/amd64`, `android/arm64`.
+- Added regression coverage:
+  - multipart Telegram send behavior test for long messages.
+  - Telegram runtime command test using `/command@bot` suffix.
+  - Telegram `/start` command response test.
+
+### Validation
+- Dockerized formatting + validation:
+  - `/usr/local/go/bin/gofmt -w ./internal/channels/telegram_driver.go ./internal/channels/registry_test.go ./internal/gateway/telegram_commands.go ./internal/gateway/telegram_runtime_test.go`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`
+- Release build matrix:
+  - `go-agent/scripts/build-matrix.sh 2.10.0 ../dist/release-v2.10.0-go-assets`
+
 ## v2.9.0-go - 2026-03-01
 
 ### Highlights

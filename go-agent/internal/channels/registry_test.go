@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/config"
@@ -132,5 +133,50 @@ func TestTelegramRequiresToken(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected telegram send to fail when token missing")
+	}
+}
+
+func TestTelegramLongMessageSplitsAcrossMultipleSends(t *testing.T) {
+	requestCount := 0
+	chunkLengths := make([]int, 0, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		if r.URL.Path != "/bottoken/sendMessage" {
+			t.Fatalf("unexpected telegram path: %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]any
+		_ = json.Unmarshal(body, &payload)
+		text, _ := payload["text"].(string)
+		chunkLengths = append(chunkLengths, len([]rune(text)))
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":101,"date":1700000000,"chat":{"id":1}}}`))
+	}))
+	defer server.Close()
+	t.Setenv("OPENCLAW_GO_TELEGRAM_API_BASE", server.URL)
+
+	reg := NewRegistry("token", "chat-1")
+	longMessage := strings.Repeat("a", maxTelegramMessageRunes+321)
+	receipt, err := reg.Send(context.Background(), SendRequest{
+		Channel: "telegram",
+		Message: longMessage,
+	})
+	if err != nil {
+		t.Fatalf("telegram send failed: %v", err)
+	}
+	if requestCount < 2 {
+		t.Fatalf("expected at least 2 sendMessage requests, got %d", requestCount)
+	}
+	for _, length := range chunkLengths {
+		if length > maxTelegramMessageRunes {
+			t.Fatalf("chunk exceeds telegram max size: %d", length)
+		}
+	}
+	meta := receipt.Metadata
+	if chunked, _ := meta["chunked"].(bool); !chunked {
+		t.Fatalf("expected chunked metadata true")
 	}
 }

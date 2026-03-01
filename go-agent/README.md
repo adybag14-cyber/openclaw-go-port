@@ -23,18 +23,22 @@ docker run --rm -v "$PWD/go-agent:/work" -w /work golang:1.25 sh -lc "export PAT
 Windows PowerShell:
 
 ```powershell
-pwsh ./scripts/build-matrix.ps1 -Version 2.9.0
+pwsh ./scripts/build-matrix.ps1 -Version 2.10.0
 ```
 
 POSIX shell:
 
 ```bash
-sh ./scripts/build-matrix.sh 2.9.0
+sh ./scripts/build-matrix.sh 2.10.0
 ```
 
 Artifacts include:
 - `openclaw-go-windows-amd64.exe`
+- `openclaw-go-windows-arm64.exe`
 - `openclaw-go-linux-amd64`
+- `openclaw-go-linux-arm64`
+- `openclaw-go-darwin-amd64`
+- `openclaw-go-darwin-arm64`
 - `openclaw-go-android-arm64`
 - `SHA256SUMS.txt`
 

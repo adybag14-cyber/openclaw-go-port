@@ -30,12 +30,21 @@ func (s *Server) handleTelegramCommand(job scheduler.Job, message string) (map[s
 		return nil, false, nil
 	}
 	root := strings.ToLower(parts[0])
+	if suffix := strings.Index(root, "@"); suffix > 0 {
+		root = root[:suffix]
+	}
 
 	var (
 		reply channels.SendReceipt
 		err   error
 	)
 	switch root {
+	case "help", "start":
+		reply = telegramCommandReceipt(target, "Commands: /model, /auth, /set, /tts. Use `/auth help` or `/tts help` for details.", map[string]any{
+			"type":      "help",
+			"command":   root,
+			"supported": []string{"model", "auth", "set", "tts"},
+		})
 	case "model":
 		reply, err = s.handleTelegramModelCommand(target, parts[1:])
 	case "auth":

@@ -1038,3 +1038,25 @@
   - `/usr/local/go/bin/gofmt -w ./internal/channels/telegram_driver.go ./internal/channels/registry_test.go ./internal/gateway/server.go ./internal/gateway/server_test.go ./internal/gateway/telegram_runtime.go ./internal/gateway/telegram_runtime_test.go`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation - v2.10.0-go Telegram Reliability Hardening + Expanded Platform Matrix
+
+- Hardened Telegram delivery path for real-world message sizes:
+  - `channels.telegram` now auto-chunks oversized outbound replies to stay within Telegram message limits.
+  - multipart sends keep explicit metadata (`chunked`, `chunkCount`, `messageIds`) for auditability.
+- Expanded Telegram command handling compatibility:
+  - supports `/command@bot` format commonly used in group chats.
+  - added explicit `/start` and `/help` responses to reduce first-message failure cases.
+- Added/expanded tests:
+  - multipart Telegram send regression (`registry_test`).
+  - `/tts@bot` command handling regression (`telegram_runtime_test`).
+  - `/start` command reply regression (`telegram_runtime_test`).
+- Expanded release build matrix for broader deployment parity:
+  - `windows/amd64`, `windows/arm64`
+  - `linux/amd64`, `linux/arm64`
+  - `darwin/amd64`, `darwin/arm64`
+  - `android/arm64`
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ./internal/channels/telegram_driver.go ./internal/channels/registry_test.go ./internal/gateway/telegram_commands.go ./internal/gateway/telegram_runtime_test.go`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`

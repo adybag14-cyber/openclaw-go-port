@@ -15,6 +15,7 @@ import (
 )
 
 const defaultTelegramAPIBase = "https://api.telegram.org"
+const maxTelegramMessageRunes = 4096
 
 func TelegramAPIBase() string {
 	if custom := strings.TrimSpace(os.Getenv("OPENCLAW_GO_TELEGRAM_API_BASE")); custom != "" {
@@ -102,26 +103,68 @@ func (d *telegramDriver) Send(ctx context.Context, req SendRequest) (SendReceipt
 		return SendReceipt{}, errors.New("telegram target chat id is required")
 	}
 
+	chunks := splitTelegramMessage(message, maxTelegramMessageRunes)
+	if len(chunks) == 0 {
+		return SendReceipt{}, errors.New("message is required")
+	}
+
+	messageIDs := make([]int64, 0, len(chunks))
+	lastResult := telegramSendMessageResult{}
+	for _, chunk := range chunks {
+		sent, err := d.sendSingleMessage(ctx, token, target, chunk)
+		if err != nil {
+			return SendReceipt{}, err
+		}
+		lastResult = sent
+		messageIDs = append(messageIDs, sent.MessageID)
+	}
+	d.setConnected()
+
+	metadata := map[string]any{
+		"mode":       "telegram-bot-api",
+		"messageId":  lastResult.MessageID,
+		"chatId":     lastResult.Chat.ID,
+		"date":       lastResult.Date,
+		"chunked":    len(chunks) > 1,
+		"chunkCount": len(chunks),
+		"messageIds": messageIDs,
+	}
+	if len(messageIDs) > 0 {
+		metadata["firstMessageId"] = messageIDs[0]
+	}
+
+	receipt := SendReceipt{
+		Provider: "telegram",
+		Channel:  "telegram",
+		To:       target,
+		Message:  message,
+		Status:   "delivered",
+		Metadata: metadata,
+	}
+	return receipt, nil
+}
+
+func (d *telegramDriver) sendSingleMessage(ctx context.Context, token string, target string, message string) (telegramSendMessageResult, error) {
 	payload := map[string]any{
 		"chat_id": target,
 		"text":    message,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		return SendReceipt{}, err
+		return telegramSendMessageResult{}, err
 	}
 
 	endpoint := fmt.Sprintf("%s/bot%s/sendMessage", TelegramAPIBase(), token)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
 	if err != nil {
-		return SendReceipt{}, err
+		return telegramSendMessageResult{}, err
 	}
 	request.Header.Set("Content-Type", "application/json")
 
 	response, err := d.httpClient.Do(request)
 	if err != nil {
 		d.setDisconnected(err.Error())
-		return SendReceipt{}, err
+		return telegramSendMessageResult{}, err
 	}
 	defer response.Body.Close()
 
@@ -132,13 +175,13 @@ func (d *telegramDriver) Send(ctx context.Context, req SendRequest) (SendReceipt
 			description = fmt.Sprintf("telegram sendMessage returned HTTP %d", response.StatusCode)
 		}
 		d.setDisconnected(description)
-		return SendReceipt{}, fmt.Errorf("telegram sendMessage failed: %s", description)
+		return telegramSendMessageResult{}, fmt.Errorf("telegram sendMessage failed: %s", description)
 	}
 
 	var parsed telegramAPIResponse[telegramSendMessageResult]
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		d.setDisconnected("invalid telegram response: " + err.Error())
-		return SendReceipt{}, fmt.Errorf("telegram sendMessage invalid response: %w", err)
+		return telegramSendMessageResult{}, fmt.Errorf("telegram sendMessage invalid response: %w", err)
 	}
 	if !parsed.OK {
 		description := strings.TrimSpace(parsed.Description)
@@ -146,24 +189,62 @@ func (d *telegramDriver) Send(ctx context.Context, req SendRequest) (SendReceipt
 			description = "telegram sendMessage rejected request"
 		}
 		d.setDisconnected(description)
-		return SendReceipt{}, errors.New(description)
+		return telegramSendMessageResult{}, errors.New(description)
 	}
 
-	d.setConnected()
-	receipt := SendReceipt{
-		Provider: "telegram",
-		Channel:  "telegram",
-		To:       target,
-		Message:  message,
-		Status:   "delivered",
-		Metadata: map[string]any{
-			"mode":      "telegram-bot-api",
-			"messageId": parsed.Result.MessageID,
-			"chatId":    parsed.Result.Chat.ID,
-			"date":      parsed.Result.Date,
-		},
+	return parsed.Result, nil
+}
+
+func splitTelegramMessage(message string, maxRunes int) []string {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return []string{}
 	}
-	return receipt, nil
+	if maxRunes <= 0 {
+		return []string{trimmed}
+	}
+
+	runes := []rune(trimmed)
+	if len(runes) <= maxRunes {
+		return []string{trimmed}
+	}
+
+	chunks := make([]string, 0, (len(runes)/maxRunes)+1)
+	for start := 0; start < len(runes); {
+		end := start + maxRunes
+		if end > len(runes) {
+			end = len(runes)
+		}
+		if end < len(runes) {
+			split := end
+			minSplit := start + maxRunes/2
+			if minSplit < start {
+				minSplit = start
+			}
+			for i := end; i > minSplit; i-- {
+				if runes[i-1] == '\n' || runes[i-1] == ' ' {
+					split = i
+					break
+				}
+			}
+			end = split
+		}
+		if end <= start {
+			end = start + maxRunes
+			if end > len(runes) {
+				end = len(runes)
+			}
+		}
+		part := strings.TrimSpace(string(runes[start:end]))
+		if part != "" {
+			chunks = append(chunks, part)
+		}
+		start = end
+	}
+	if len(chunks) == 0 {
+		return []string{trimmed}
+	}
+	return chunks
 }
 
 func (d *telegramDriver) Logout(_ context.Context, _ string) (bool, error) {
