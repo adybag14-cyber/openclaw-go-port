@@ -1,12 +1,12 @@
 {
-    "rustGatewayPath":  "src/gateway.rs",
-    "upstreamRepoPath":  "..\\\\openclaw",
+    "rustGatewayPath":  "C:\\Users\\Ady\\Documents\\openclaw-rust\\src\\gateway.rs",
+    "upstreamRepoPath":  "C:\\Users\\Ady\\Documents\\openclaw-upstream-main",
     "rustCount":  133,
     "surfaces":  {
                      "base":  {
-                                  "upstreamCount":  91,
+                                  "upstreamCount":  89,
                                   "rustCount":  133,
-                                  "intersectionCount":  91,
+                                  "intersectionCount":  89,
                                   "coveragePercent":  100,
                                   "missingInRust":  [
 
@@ -22,6 +22,7 @@
                                                    "canvas.present",
                                                    "chat.inject",
                                                    "connect",
+                                                   "doctor.memory.status",
                                                    "edge.acceleration.status",
                                                    "edge.alignment.evaluate",
                                                    "edge.collaboration.plan",
@@ -52,14 +53,15 @@
                                                    "sessions.usage",
                                                    "sessions.usage.logs",
                                                    "sessions.usage.timeseries",
+                                                   "tools.catalog",
                                                    "web.login.start",
                                                    "web.login.wait"
                                                ]
                               },
                      "handlers":  {
-                                      "upstreamCount":  101,
+                                      "upstreamCount":  99,
                                       "rustCount":  133,
-                                      "intersectionCount":  101,
+                                      "intersectionCount":  99,
                                       "coveragePercent":  100,
                                       "missingInRust":  [
 
@@ -73,6 +75,7 @@
                                                        "auth.oauth.wait",
                                                        "browser.open",
                                                        "canvas.present",
+                                                       "doctor.memory.status",
                                                        "edge.acceleration.status",
                                                        "edge.alignment.evaluate",
                                                        "edge.collaboration.plan",
@@ -96,8 +99,10 @@
                                                        "secrets.reload",
                                                        "session.status",
                                                        "sessions.history",
-                                                       "sessions.send"
+                                                       "sessions.send",
+                                                       "tools.catalog"
                                                    ]
                                   }
-                 }
+                 },
+    "generatedAtUtc":  "2026-03-02T23:26:38.2346977Z"
 }

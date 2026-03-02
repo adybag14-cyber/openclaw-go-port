@@ -1,6 +1,6 @@
 # RPC Method Surface Diff
 
-Generated (UTC): deterministic
+Generated (UTC): 2026-03-02T23:26:38.2346977Z
 
 ## Summary
 
@@ -9,9 +9,9 @@ Generated (UTC): deterministic
 
 ## Surface: base
 
-- Upstream method count: 91
+- Upstream method count: 89
 - Rust method count: 133
-- Shared methods: 91
+- Shared methods: 89
 - Coverage vs upstream: 100%
 
 ### Missing In Rust
@@ -30,6 +30,7 @@ Generated (UTC): deterministic
 - `canvas.present`
 - `chat.inject`
 - `connect`
+- `doctor.memory.status`
 - `edge.acceleration.status`
 - `edge.alignment.evaluate`
 - `edge.collaboration.plan`
@@ -60,14 +61,15 @@ Generated (UTC): deterministic
 - `sessions.usage`
 - `sessions.usage.logs`
 - `sessions.usage.timeseries`
+- `tools.catalog`
 - `web.login.start`
 - `web.login.wait`
 
 ## Surface: handlers
 
-- Upstream method count: 101
+- Upstream method count: 99
 - Rust method count: 133
-- Shared methods: 101
+- Shared methods: 99
 - Coverage vs upstream: 100%
 
 ### Missing In Rust
@@ -84,6 +86,7 @@ Generated (UTC): deterministic
 - `auth.oauth.wait`
 - `browser.open`
 - `canvas.present`
+- `doctor.memory.status`
 - `edge.acceleration.status`
 - `edge.alignment.evaluate`
 - `edge.collaboration.plan`
@@ -108,3 +111,4 @@ Generated (UTC): deterministic
 - `session.status`
 - `sessions.history`
 - `sessions.send`
+- `tools.catalog`

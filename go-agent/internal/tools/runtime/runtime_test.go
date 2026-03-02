@@ -240,6 +240,58 @@ func TestBrowserRequestCompletionUsesBridgeEndpoint(t *testing.T) {
 	}
 }
 
+func TestBrowserRequestCompletionForwardsAPIKey(t *testing.T) {
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request payload failed: %v", err)
+		}
+		if payload["provider"] != "openrouter" {
+			t.Fatalf("unexpected provider: %v", payload["provider"])
+		}
+		if payload["apiKey"] != "sk-or-test" {
+			t.Fatalf("expected apiKey to be forwarded, got %v", payload["apiKey"])
+		}
+		if payload["api_key"] != "sk-or-test" {
+			t.Fatalf("expected api_key to be forwarded, got %v", payload["api_key"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cmpl-key","model":"openrouter/auto","choices":[{"message":{"role":"assistant","content":"key-ok"}}]}`))
+	}))
+	defer bridge.Close()
+
+	rt := NewDefaultWithOptions(RuntimeOptions{
+		BrowserBridge: BrowserBridgeOptions{
+			Enabled:              true,
+			Endpoint:             bridge.URL,
+			RequestTimeout:       3 * time.Second,
+			Retries:              0,
+			RetryBackoff:         0,
+			CircuitFailThreshold: 3,
+			CircuitCooldown:      3 * time.Second,
+		},
+	})
+
+	result, err := rt.Invoke(context.Background(), Request{
+		Tool: "browser.request",
+		Input: map[string]any{
+			"provider": "openrouter",
+			"model":    "openrouter/auto",
+			"apiKey":   "sk-or-test",
+			"messages": []map[string]any{
+				{"role": "user", "content": "hello"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("browser.request invoke failed: %v", err)
+	}
+	output, _ := result.Output.(map[string]any)
+	if output["assistantText"] != "key-ok" {
+		t.Fatalf("unexpected assistant text: %v", output["assistantText"])
+	}
+}
+
 func TestBrowserRequestCompletionRetriesThenSucceeds(t *testing.T) {
 	var attempts atomic.Int32
 	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

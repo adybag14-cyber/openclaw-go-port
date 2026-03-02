@@ -437,6 +437,194 @@ func TestProcessTelegramUpdateFallsBackToLatestAuthorizedProviderSession(t *test
 	}
 }
 
+func TestProcessTelegramUpdateFallsBackAcrossProviders(t *testing.T) {
+	var bridgeMu sync.Mutex
+	bridgePayloads := make([]map[string]any, 0, 4)
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		bridgeMu.Lock()
+		bridgePayloads = append(bridgePayloads, payload)
+		bridgeMu.Unlock()
+
+		if strings.EqualFold(toString(payload["provider"], ""), "qwen") {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":"qwen login missing"}`))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cmpl-fallback","model":"gpt-5.2","choices":[{"message":{"role":"assistant","content":"fallback-provider-ok"}}]}`))
+	}))
+	defer bridge.Close()
+
+	var mu sync.Mutex
+	messages := make([]string, 0, 4)
+	telegramAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/bottoken/sendMessage":
+			body, _ := io.ReadAll(r.Body)
+			var payload map[string]any
+			_ = json.Unmarshal(body, &payload)
+			mu.Lock()
+			messages = append(messages, strings.TrimSpace(toString(payload["text"], "")))
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":333,"chat":{"id":903},"date":1700000000}}`))
+		case "/bottoken/sendChatAction":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+		default:
+			t.Fatalf("unexpected telegram endpoint: %s", r.URL.Path)
+		}
+	}))
+	defer telegramAPI.Close()
+	t.Setenv("OPENCLAW_GO_TELEGRAM_API_BASE", telegramAPI.URL)
+
+	cfg := config.Default()
+	cfg.Channels.Telegram.BotToken = "token"
+	cfg.Runtime.StatePath = "memory://telegram-runtime-provider-fallback"
+	cfg.Runtime.BrowserBridge.Enabled = true
+	cfg.Runtime.BrowserBridge.Endpoint = bridge.URL
+	cfg.Runtime.BrowserBridge.RequestTimeoutMs = 5000
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+
+	// Explicitly select a provider that will fail in the bridge mock.
+	s.compat.setTelegramModelSelection("903", "qwen", "qwen3.5-plus")
+
+	authorized := s.webLogin.Start(webbridge.StartOptions{Provider: "chatgpt", Model: "gpt-5.2"})
+	if _, err := s.webLogin.Complete(authorized.ID, authorized.Code); err != nil {
+		t.Fatalf("failed to authorize fallback provider session: %v", err)
+	}
+
+	update := telegramInboundUpdate{
+		UpdateID: 13,
+		Message: &telegramInboundEntry{
+			Text: "can you still reply if qwen fails?",
+			Chat: telegramInboundChat{ID: 903},
+			From: telegramInboundUser{ID: 77, IsBot: false},
+		},
+	}
+	if err := s.processTelegramUpdate(context.Background(), update); err != nil {
+		t.Fatalf("processTelegramUpdate provider failover failed: %v", err)
+	}
+
+	mu.Lock()
+	if len(messages) != 1 {
+		mu.Unlock()
+		t.Fatalf("expected one outbound telegram message, got %d", len(messages))
+	}
+	if messages[0] != "fallback-provider-ok" {
+		got := messages[0]
+		mu.Unlock()
+		t.Fatalf("expected fallback reply text, got %q", got)
+	}
+	mu.Unlock()
+
+	bridgeMu.Lock()
+	defer bridgeMu.Unlock()
+	if len(bridgePayloads) < 2 {
+		t.Fatalf("expected at least 2 bridge attempts (primary + fallback), got %d", len(bridgePayloads))
+	}
+	firstProvider := strings.ToLower(strings.TrimSpace(toString(bridgePayloads[0]["provider"], "")))
+	if firstProvider != "qwen" {
+		t.Fatalf("expected first attempt provider=qwen, got %q", firstProvider)
+	}
+	seenQwen := false
+	seenChatGPT := false
+	chatGPTLoginID := ""
+	for _, payload := range bridgePayloads {
+		provider := strings.ToLower(strings.TrimSpace(toString(payload["provider"], "")))
+		switch provider {
+		case "qwen":
+			seenQwen = true
+		case "chatgpt":
+			seenChatGPT = true
+			if chatGPTLoginID == "" {
+				chatGPTLoginID = strings.TrimSpace(toString(payload["loginSessionId"], ""))
+			}
+		}
+	}
+	if !seenQwen {
+		t.Fatalf("expected at least one qwen attempt in bridge payloads")
+	}
+	if !seenChatGPT {
+		t.Fatalf("expected fallback attempt for chatgpt provider")
+	}
+	if chatGPTLoginID != authorized.ID {
+		t.Fatalf("expected fallback attempt loginSessionId %q, got %q", authorized.ID, chatGPTLoginID)
+	}
+}
+
+func TestProcessTelegramUpdateForwardsProviderAPIKeyToBridge(t *testing.T) {
+	var bridgeMu sync.Mutex
+	var bridgePayload map[string]any
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		bridgeMu.Lock()
+		bridgePayload = payload
+		bridgeMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cmpl-key","model":"openrouter/auto","choices":[{"message":{"role":"assistant","content":"key-forward-ok"}}]}`))
+	}))
+	defer bridge.Close()
+
+	telegramAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/bottoken/sendMessage", "/bottoken/sendChatAction":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":444,"chat":{"id":904},"date":1700000000}}`))
+		default:
+			t.Fatalf("unexpected telegram endpoint: %s", r.URL.Path)
+		}
+	}))
+	defer telegramAPI.Close()
+	t.Setenv("OPENCLAW_GO_TELEGRAM_API_BASE", telegramAPI.URL)
+
+	cfg := config.Default()
+	cfg.Channels.Telegram.BotToken = "token"
+	cfg.Runtime.StatePath = "memory://telegram-runtime-provider-key"
+	cfg.Runtime.BrowserBridge.Enabled = true
+	cfg.Runtime.BrowserBridge.Endpoint = bridge.URL
+	cfg.Runtime.BrowserBridge.RequestTimeoutMs = 5000
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+
+	s.compat.setProviderAPIKey("openrouter", "sk-or-test")
+	s.compat.setTelegramModelSelection("904", "openrouter", "openrouter/auto")
+
+	update := telegramInboundUpdate{
+		UpdateID: 14,
+		Message: &telegramInboundEntry{
+			Text: "use provider key",
+			Chat: telegramInboundChat{ID: 904},
+			From: telegramInboundUser{ID: 88, IsBot: false},
+		},
+	}
+	if err := s.processTelegramUpdate(context.Background(), update); err != nil {
+		t.Fatalf("processTelegramUpdate provider key failed: %v", err)
+	}
+
+	bridgeMu.Lock()
+	defer bridgeMu.Unlock()
+	if bridgePayload == nil {
+		t.Fatalf("expected bridge payload to be captured")
+	}
+	if got := strings.TrimSpace(toString(bridgePayload["provider"], "")); got != "openrouter" {
+		t.Fatalf("expected provider openrouter, got %q", got)
+	}
+	if got := strings.TrimSpace(toString(bridgePayload["apiKey"], "")); got != "sk-or-test" {
+		t.Fatalf("expected apiKey forwarding, got %q", got)
+	}
+	if got := strings.TrimSpace(toString(bridgePayload["api_key"], "")); got != "sk-or-test" {
+		t.Fatalf("expected api_key forwarding, got %q", got)
+	}
+}
+
 func TestTrimTelegramMessagesToBudgetKeepsMostRecentMessages(t *testing.T) {
 	messages := []map[string]any{
 		{"role": "system", "content": "1234567890"},
@@ -454,5 +642,28 @@ func TestTrimTelegramMessagesToBudgetKeepsMostRecentMessages(t *testing.T) {
 	}
 	if toString(trimmed[len(trimmed)-1]["content"], "") != "cccc" {
 		t.Fatalf("expected newest user message to be retained")
+	}
+}
+
+func TestTrimTelegramMessagesToBudgetTruncatesNewestUserWhenNeeded(t *testing.T) {
+	messages := []map[string]any{
+		{"role": "system", "content": "1234567890"},
+		{"role": "assistant", "content": "short"},
+		{"role": "user", "content": "this is a very long user message that exceeds the budget"},
+	}
+
+	trimmed := trimTelegramMessagesToBudget(messages, 18)
+	if len(trimmed) != 2 {
+		t.Fatalf("expected only system + newest user messages, got %d", len(trimmed))
+	}
+	if toString(trimmed[1]["role"], "") != "user" {
+		t.Fatalf("expected last message to remain user, got %v", trimmed[1]["role"])
+	}
+	content := toString(trimmed[1]["content"], "")
+	if strings.TrimSpace(content) == "" {
+		t.Fatalf("expected truncated user message to remain non-empty")
+	}
+	if len(content) > 8 {
+		t.Fatalf("expected truncated user message to fit remaining budget, got %d chars", len(content))
 	}
 }

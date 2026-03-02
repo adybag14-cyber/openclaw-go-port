@@ -271,55 +271,158 @@ func (s *Server) buildTelegramAssistantReply(ctx context.Context, target string,
 	invokeCtx, cancel := context.WithTimeout(ctx, timeout+10*time.Second)
 	defer cancel()
 
-	loginSessionID := s.resolveTelegramAuthorizedLoginSession(target, provider)
-
 	messages := s.buildTelegramCompletionMessages(sessionID, userMessage)
-	input := map[string]any{
-		"provider": provider,
-		"model":    model,
-		"messages": messages,
-	}
-	if loginSessionID != "" {
-		input["loginSessionId"] = loginSessionID
-	}
+	attempts := s.buildTelegramCompletionAttempts(target, provider, model)
+	attemptMeta := make([]map[string]any, 0, len(attempts))
+	var lastErr error
+	for idx, attempt := range attempts {
+		input := map[string]any{
+			"provider": attempt.Provider,
+			"model":    attempt.Model,
+			"messages": messages,
+		}
+		if attempt.LoginSessionID != "" {
+			input["loginSessionId"] = attempt.LoginSessionID
+		}
+		if attempt.APIKey != "" {
+			// Keep both key styles for compatibility with different bridge backends.
+			input["apiKey"] = attempt.APIKey
+			input["api_key"] = attempt.APIKey
+		}
 
-	invokeResult, err := s.tools.Invoke(invokeCtx, toolruntime.Request{
-		Tool:      "browser.request",
-		SessionID: sessionID,
-		Input:     input,
-	})
-	if err != nil {
-		return "", map[string]any{
-			"provider": provider,
-			"model":    model,
-			"auth": map[string]any{
-				"loginSessionId": loginSessionID,
-				"hasAuthorized":  s.webLogin.HasAuthorizedSession(),
+		invokeResult, err := s.tools.Invoke(invokeCtx, toolruntime.Request{
+			Tool:      "browser.request",
+			SessionID: sessionID,
+			Input:     input,
+		})
+		if err != nil {
+			lastErr = err
+			attemptMeta = append(attemptMeta, map[string]any{
+				"attempt":        idx + 1,
+				"provider":       attempt.Provider,
+				"model":          attempt.Model,
+				"loginSessionId": attempt.LoginSessionID,
+				"reason":         attempt.Reason,
+				"ok":             false,
+				"error":          conciseError(err, 240),
+			})
+			continue
+		}
+
+		assistant := extractAssistantTextFromInvokeOutput(invokeResult.Output)
+		if strings.TrimSpace(assistant) == "" {
+			lastErr = errors.New("assistant response was empty")
+			attemptMeta = append(attemptMeta, map[string]any{
+				"attempt":        idx + 1,
+				"provider":       attempt.Provider,
+				"model":          attempt.Model,
+				"loginSessionId": attempt.LoginSessionID,
+				"reason":         attempt.Reason,
+				"ok":             false,
+				"error":          "assistant response was empty",
+			})
+			continue
+		}
+
+		attemptMeta = append(attemptMeta, map[string]any{
+			"attempt":        idx + 1,
+			"provider":       attempt.Provider,
+			"model":          attempt.Model,
+			"loginSessionId": attempt.LoginSessionID,
+			"reason":         attempt.Reason,
+			"ok":             true,
+		})
+		return assistant, map[string]any{
+			"provider":           attempt.Provider,
+			"model":              attempt.Model,
+			"toolProvider":       invokeResult.Provider,
+			"providerFailover":   idx > 0,
+			"providerRequested":  provider,
+			"modelRequested":     model,
+			"completionAttempts": attemptMeta,
+			"messages": map[string]any{
+				"contextCount": len(messages),
 			},
-		}, err
+			"auth": map[string]any{
+				"loginSessionId": attempt.LoginSessionID,
+				"hasAuthorized":  s.webLogin.HasAuthorizedSession(),
+				"usedAPIKey":     attempt.APIKey != "",
+			},
+		}, nil
 	}
 
-	assistant := extractAssistantTextFromInvokeOutput(invokeResult.Output)
-	if strings.TrimSpace(assistant) == "" {
-		return "", map[string]any{
-			"provider":     provider,
-			"model":        model,
-			"toolProvider": invokeResult.Provider,
-		}, errors.New("assistant response was empty")
+	if lastErr == nil {
+		lastErr = errors.New("assistant response was empty")
 	}
-
-	return assistant, map[string]any{
-		"provider":     provider,
-		"model":        model,
-		"toolProvider": invokeResult.Provider,
-		"messages": map[string]any{
-			"contextCount": len(messages),
-		},
+	return "", map[string]any{
+		"provider":           provider,
+		"model":              model,
+		"providerFailover":   len(attempts) > 1,
+		"providerRequested":  provider,
+		"modelRequested":     model,
+		"completionAttempts": attemptMeta,
 		"auth": map[string]any{
-			"loginSessionId": loginSessionID,
-			"hasAuthorized":  s.webLogin.HasAuthorizedSession(),
+			"hasAuthorized": s.webLogin.HasAuthorizedSession(),
 		},
-	}, nil
+	}, lastErr
+}
+
+type telegramCompletionAttempt struct {
+	Provider       string
+	Model          string
+	LoginSessionID string
+	APIKey         string
+	Reason         string
+}
+
+func (s *Server) buildTelegramCompletionAttempts(target string, provider string, model string) []telegramCompletionAttempt {
+	provider = normalizeProviderID(provider)
+	if provider == "" {
+		provider = "chatgpt"
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		model = "gpt-5.2"
+	}
+
+	attempts := make([]telegramCompletionAttempt, 0, 2)
+	primary := telegramCompletionAttempt{
+		Provider:       provider,
+		Model:          model,
+		LoginSessionID: s.resolveTelegramAuthorizedLoginSession(target, provider),
+		APIKey:         strings.TrimSpace(s.compat.getProviderAPIKey(provider)),
+		Reason:         "selected",
+	}
+	attempts = append(attempts, primary)
+
+	authorized, ok := s.webLogin.LatestAuthorizedSession("")
+	if !ok {
+		return attempts
+	}
+	fallbackProvider := normalizeProviderID(authorized.Provider)
+	if fallbackProvider == "" {
+		fallbackProvider = provider
+	}
+	fallbackModel := strings.TrimSpace(authorized.Model)
+	if fallbackModel == "" {
+		if defaultModel, ok := s.compat.defaultModelForProvider(fallbackProvider); ok {
+			fallbackModel = defaultModel
+		} else {
+			fallbackModel = "gpt-5.2"
+		}
+	}
+	if fallbackProvider == primary.Provider && fallbackModel == primary.Model && strings.TrimSpace(authorized.ID) == primary.LoginSessionID {
+		return attempts
+	}
+
+	attempts = append(attempts, telegramCompletionAttempt{
+		Provider:       fallbackProvider,
+		Model:          fallbackModel,
+		LoginSessionID: strings.TrimSpace(authorized.ID),
+		APIKey:         strings.TrimSpace(s.compat.getProviderAPIKey(fallbackProvider)),
+		Reason:         "latest-authorized-fallback",
+	})
+	return attempts
 }
 
 func resolveTelegramSessionID(message *telegramInboundEntry) string {
@@ -522,8 +625,26 @@ func trimTelegramMessagesToBudget(messages []map[string]any, maxChars int) []map
 		return []map[string]any{system}
 	}
 
+	// Never drop the newest user turn: include it even if truncation is required.
+	last := cloneTelegramMessage(messages[len(messages)-1])
+	lastContent := strings.TrimSpace(toString(last["content"], ""))
+	if lastContent != "" {
+		if len(lastContent) > remaining {
+			last["content"] = trimTelegramPromptText(lastContent, remaining)
+			remaining = 0
+		} else {
+			remaining -= len(lastContent)
+		}
+	}
+
 	tail := make([]map[string]any, 0, len(messages)-1)
-	for i := len(messages) - 1; i >= 1; i-- {
+	if strings.TrimSpace(toString(last["content"], "")) != "" {
+		tail = append(tail, last)
+	}
+	for i := len(messages) - 2; i >= 1; i-- {
+		if remaining <= 0 {
+			break
+		}
 		content := strings.TrimSpace(toString(messages[i]["content"], ""))
 		if content == "" {
 			continue
@@ -540,6 +661,17 @@ func trimTelegramMessagesToBudget(messages []map[string]any, maxChars int) []map
 	out := make([]map[string]any, 0, len(tail)+1)
 	out = append(out, system)
 	out = append(out, tail...)
+	return out
+}
+
+func cloneTelegramMessage(input map[string]any) map[string]any {
+	if len(input) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
 	return out
 }
 

@@ -5,6 +5,34 @@
 ### Highlights
 - No unreleased changes.
 
+## v2.14.0-go - 2026-03-02
+
+### Highlights
+- Refreshed cross-port parity audit against latest references:
+  - upstream OpenClaw `origin/main` `0954b6bf5`
+  - OpenClaw Rust `b2abb0d`
+  - goclaw `origin/master` `0ee0f6d`
+- Confirmed method-surface parity remains complete:
+  - Go vs upstream base: `100%`
+  - Go vs upstream handlers: `100%`
+  - Go vs Rust: `100%`
+- Hardened Telegram provider execution path:
+  - Telegram runtime now retries through the latest authorized provider session when selected-provider completion fails.
+  - reduces single-provider outage/login mismatch failures in live Telegram chats.
+- Hardened browser bridge credential propagation:
+  - configured provider API keys now flow through runtime payloads as both `apiKey` and `api_key` fields.
+  - applies to Telegram completion flow and direct `browser.request`/`browser.open` scheduling.
+- Hardened Telegram completion budget behavior:
+  - newest user turn is now preserved (truncated when needed) instead of being dropped under tight prompt budgets.
+
+### Validation
+- Dockerized formatting + validation:
+  - `gofmt -w ./internal/gateway/telegram_runtime.go ./internal/gateway/telegram_runtime_test.go ./internal/gateway/server.go ./internal/tools/runtime/runtime.go ./internal/tools/runtime/runtime_test.go`
+  - `go test ./...`
+  - `go vet ./...`
+- Race check:
+  - `go test -race ./...` attempted in `golang:1.25` container, blocked because `gcc` is not present in the image (`cgo: C compiler "gcc" not found`).
+
 ## v2.13.0-go - 2026-03-02
 
 ### Highlights

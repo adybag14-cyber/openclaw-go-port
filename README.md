@@ -2,7 +2,7 @@
 
 OpenClaw is now fully ported to Go in this repository.
 
-Current release: `v2.12.0-go`
+Current release: `v2.14.0-go`
 
 ## Status
 
@@ -27,6 +27,11 @@ Current release: `v2.12.0-go`
   - bridge completions now receive full session-aware context (system + history + current turn), not only the final user line.
   - Telegram scoped auth session IDs are forwarded to browser completion payloads.
   - tool catalog + memory recall summaries are injected into assistant context to prevent false “no tools/no memory” responses.
+- Cross-port parity hardening (`v2.14.0-go`):
+  - refreshed parity diff against latest upstream OpenClaw + Rust + goclaw references.
+  - Telegram runtime now performs provider failover to latest authorized provider session on selected-provider failure.
+  - provider API keys are now forwarded into browser bridge payloads (`apiKey` / `api_key`).
+  - Telegram prompt budget trimming now preserves the newest user turn via truncation instead of dropping it.
 - Multi-channel adapter breadth expanded in Go runtime (`v2.6.x-go` scope):
   - `telegram`, `whatsapp`, `discord`, `slack`, `feishu`, `qq`, `wework`, `dingtalk`, `infoflow`, `googlechat`, `teams`, `matrix`, `signal`, `line`, `mattermost`, `imessage`, plus `webchat` and `cli`.
 
@@ -161,14 +166,14 @@ A non-zero exit blocks release for that scope.
 
 ```powershell
 Set-Location go-agent
-./scripts/build-matrix.ps1 -Version 2.12.0 -OutputDir ../dist/release-v2.12.0-go-assets
+./scripts/build-matrix.ps1 -Version 2.14.0 -OutputDir ../dist/release-v2.14.0-go-assets
 ```
 
 ### POSIX shell
 
 ```bash
 cd go-agent
-sh ./scripts/build-matrix.sh 2.12.0 ../dist/release-v2.12.0-go-assets
+sh ./scripts/build-matrix.sh 2.14.0 ../dist/release-v2.14.0-go-assets
 ```
 
 Outputs:
@@ -189,9 +194,9 @@ Build defaults:
 
 ```powershell
 git push origin main
-git tag v2.12.0-go
-git push origin v2.12.0-go
-gh release create v2.12.0-go dist/release-v2.12.0-go-assets/openclaw-go-windows-amd64.exe dist/release-v2.12.0-go-assets/openclaw-go-windows-arm64.exe dist/release-v2.12.0-go-assets/openclaw-go-linux-amd64 dist/release-v2.12.0-go-assets/openclaw-go-linux-arm64 dist/release-v2.12.0-go-assets/openclaw-go-darwin-amd64 dist/release-v2.12.0-go-assets/openclaw-go-darwin-arm64 dist/release-v2.12.0-go-assets/openclaw-go-android-arm64 dist/release-v2.12.0-go-assets/SHA256SUMS.txt -R adybag14-cyber/openclaw-go-port --title "OpenClaw Go v2.12.0" --notes-file docs/go-port/release-v2.12.0-go.md
+git tag v2.14.0-go
+git push origin v2.14.0-go
+gh release create v2.14.0-go dist/release-v2.14.0-go-assets/openclaw-go-windows-amd64.exe dist/release-v2.14.0-go-assets/openclaw-go-windows-arm64.exe dist/release-v2.14.0-go-assets/openclaw-go-linux-amd64 dist/release-v2.14.0-go-assets/openclaw-go-linux-arm64 dist/release-v2.14.0-go-assets/openclaw-go-darwin-amd64 dist/release-v2.14.0-go-assets/openclaw-go-darwin-arm64 dist/release-v2.14.0-go-assets/openclaw-go-android-arm64 dist/release-v2.14.0-go-assets/SHA256SUMS.txt -R adybag14-cyber/openclaw-go-port --title "OpenClaw Go v2.14.0" --notes-file docs/go-port/release-v2.14.0-go.md
 ```
 
 ## Telegram and Auth Flows
@@ -247,7 +252,7 @@ auth_prefix = "Bearer"
 
 ## Additional Docs
 
-- Go release notes: `docs/go-port/release-v2.12.0-go.md`
+- Go release notes: `docs/go-port/release-v2.14.0-go.md`
 - Port plan: `docs/GO_PORT_PLAN.md`
 - Phase checklist: `docs/go-port/phase-checklist.md`
 - Go changelog entries: `CHANGELOG.md`

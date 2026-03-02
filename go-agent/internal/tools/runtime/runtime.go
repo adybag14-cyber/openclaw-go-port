@@ -1039,6 +1039,11 @@ func toBrowserCompletionPayload(input map[string]any) (map[string]any, bool) {
 	if loginSessionID := strings.TrimSpace(toString(input["loginSessionId"], toString(input["login_session_id"], ""))); loginSessionID != "" {
 		payload["loginSessionId"] = loginSessionID
 	}
+	if apiKey := strings.TrimSpace(toString(input["apiKey"], toString(input["api_key"], ""))); apiKey != "" {
+		// Keep both key styles for compatibility with bridge backends.
+		payload["apiKey"] = apiKey
+		payload["api_key"] = apiKey
+	}
 	return payload, true
 }
 

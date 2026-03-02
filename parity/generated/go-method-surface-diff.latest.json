@@ -1,0 +1,18 @@
+{
+  "generatedAtUtc": "2026-03-02T23:26:55.5407173Z",
+  "goCount": 134,
+  "rustCount": 133,
+  "upstreamBaseCount": 89,
+  "upstreamHandlerCount": 99,
+  "goMissingVsRust": [],
+  "goOnlyVsRust": [
+    "node.canvas.capability.refresh"
+  ],
+  "goMissingVsUpstreamBase": [],
+  "goMissingVsUpstreamHandlers": [],
+  "coverage": {
+    "vsRust": 100.0,
+    "vsUpstreamBase": 100.0,
+    "vsUpstreamHandlers": 100.0
+  }
+}

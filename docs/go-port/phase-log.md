@@ -1204,3 +1204,32 @@
   - `/usr/local/go/bin/gofmt -w ./internal/rpc/registry.go ./internal/gateway/compat.go ./internal/gateway/server_test.go`
   - `/usr/local/go/bin/go test ./...`
   - `/usr/local/go/bin/go vet ./...`
+
+### Post-v2 Continuation - v2.14.0-go Cross-Port Parity Hardening (Upstream + Rust + goclaw)
+
+- Refreshed cross-port parity evidence against latest references:
+  - upstream OpenClaw `origin/main` `0954b6bf5`
+  - Rust runtime `b2abb0d`
+  - goclaw reference `origin/master` `0ee0f6d`
+- Regenerated method-surface artifacts:
+  - `parity/generated/upstream-methods.base.latest.json`
+  - `parity/generated/upstream-methods.handlers.latest.json`
+  - `parity/generated/rust-methods.latest.json`
+  - `parity/generated/go-methods.latest.json`
+  - `parity/generated/go-method-surface-diff.latest.json`
+- Added cross-port parity report:
+  - `docs/go-port/cross-port-parity-diff-2026-03-02.md`
+- Implemented runtime depth improvements:
+  - Telegram provider failover now retries through latest authorized provider session when the selected provider path fails.
+  - Provider API keys now propagate into browser bridge completion payloads (`apiKey` and `api_key`) for Telegram and direct browser runtime calls.
+  - Telegram prompt budget trimming now retains the newest user turn by truncating it when needed (instead of dropping it).
+- Added regression coverage:
+  - `TestProcessTelegramUpdateFallsBackAcrossProviders`
+  - `TestProcessTelegramUpdateForwardsProviderAPIKeyToBridge`
+  - `TestTrimTelegramMessagesToBudgetTruncatesNewestUserWhenNeeded`
+  - `TestBrowserRequestCompletionForwardsAPIKey`
+- Validation completed (Dockerized Go toolchain):
+  - `gofmt -w ./internal/gateway/telegram_runtime.go ./internal/gateway/telegram_runtime_test.go ./internal/gateway/server.go ./internal/tools/runtime/runtime.go ./internal/tools/runtime/runtime_test.go`
+  - `go test ./...`
+  - `go vet ./...`
+  - `go test -race ./...` attempted; blocked in container due missing `gcc` in default `golang:1.25` image.
