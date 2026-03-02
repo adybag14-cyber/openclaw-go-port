@@ -182,6 +182,7 @@ var defaultSupportedRPCMethods = []string{
 	"node.invoke",
 	"node.invoke.result",
 	"node.event",
+	"node.canvas.capability.refresh",
 	"push.test",
 	"browser.request",
 	"browser.open",

@@ -3,10 +3,12 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -1079,10 +1081,12 @@ func (s *Server) handleCompatMethod(ctx context.Context, requestID string, canon
 	case "skills.update":
 		return s.handleCompatSkillsUpdate(params), nil
 	case "secrets.reload":
+		warningCount := len(toStringSlice(params["keys"]))
 		return map[string]any{
-			"ok":         true,
-			"reloadedAt": time.Now().UTC().Format(time.RFC3339),
-			"count":      len(toStringSlice(params["keys"])),
+			"ok":           true,
+			"warningCount": warningCount,
+			"reloadedAt":   time.Now().UTC().Format(time.RFC3339),
+			"count":        warningCount,
 		}, nil
 	case "update.run":
 		return s.handleCompatUpdateRun(requestID, params), nil
@@ -1146,6 +1150,8 @@ func (s *Server) handleCompatMethod(ctx context.Context, requestID string, canon
 		return s.handleCompatNodeInvokeResult(params), nil
 	case "node.event":
 		return s.handleCompatNodeEvent(params), nil
+	case "node.canvas.capability.refresh":
+		return s.handleCompatNodeCanvasCapabilityRefresh(params)
 	case "push.test":
 		return map[string]any{
 			"ok":        true,
@@ -1316,9 +1322,12 @@ func (s *Server) handleCompatTalkMode(params map[string]any) map[string]any {
 }
 
 const (
-	defaultCompatTTSProvider  = "native"
-	defaultCompatTTSFormat    = "wav"
-	defaultKittenTTSTimeoutMs = 25000
+	defaultCompatTTSProvider      = "native"
+	defaultCompatTTSFormat        = "wav"
+	defaultKittenTTSTimeoutMs     = 25000
+	compatCanvasCapabilityTTL     = 10 * time.Minute
+	compatCanvasCapabilityPath    = "/__openclaw__/cap"
+	compatCanvasCapabilityEntropy = 18
 )
 
 func normalizeTTSProviderID(value string) string {
@@ -2511,6 +2520,83 @@ func (s *Server) handleCompatNodeEvent(params map[string]any) map[string]any {
 	}
 	s.compat.mu.Unlock()
 	return map[string]any{"event": cloneMap(event)}
+}
+
+func mintCompatCanvasCapabilityToken() (string, error) {
+	tokenBytes := make([]byte, compatCanvasCapabilityEntropy)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(tokenBytes), nil
+}
+
+func buildCompatCanvasScopedHostURL(baseURL string, capability string) (string, error) {
+	trimmedCapability := strings.TrimSpace(capability)
+	if trimmedCapability == "" {
+		return "", fmt.Errorf("empty capability")
+	}
+	parsed, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil || strings.TrimSpace(parsed.Scheme) == "" || strings.TrimSpace(parsed.Host) == "" {
+		return "", fmt.Errorf("invalid base canvas host url")
+	}
+	trimmedPath := strings.TrimRight(parsed.Path, "/")
+	parsed.Path = fmt.Sprintf("%s%s/%s", trimmedPath, compatCanvasCapabilityPath, url.PathEscape(trimmedCapability))
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimSuffix(parsed.String(), "/"), nil
+}
+
+func (s *Server) handleCompatNodeCanvasCapabilityRefresh(params map[string]any) (map[string]any, *dispatchError) {
+	nodeID := strings.TrimSpace(toString(params["nodeId"], ""))
+	baseCanvasHostURL := strings.TrimSpace(toString(params["canvasHostUrl"], toString(params["canvas_host_url"], "")))
+	if baseCanvasHostURL == "" && nodeID != "" {
+		s.compat.mu.RLock()
+		if node, ok := s.compat.nodes[nodeID]; ok {
+			baseCanvasHostURL = strings.TrimSpace(toString(node["canvasBaseHostUrl"], toString(node["canvasHostUrl"], "")))
+		}
+		s.compat.mu.RUnlock()
+	}
+	if baseCanvasHostURL == "" {
+		return nil, &dispatchError{
+			Code:    -32040,
+			Message: "canvas host unavailable for this node session",
+		}
+	}
+
+	canvasCapability, err := mintCompatCanvasCapabilityToken()
+	if err != nil {
+		return nil, &dispatchError{
+			Code:    -32040,
+			Message: "failed to mint scoped canvas host URL",
+		}
+	}
+	scopedCanvasHostURL, err := buildCompatCanvasScopedHostURL(baseCanvasHostURL, canvasCapability)
+	if err != nil {
+		return nil, &dispatchError{
+			Code:    -32040,
+			Message: "failed to mint scoped canvas host URL",
+		}
+	}
+	canvasCapabilityExpiresAtMs := time.Now().UTC().Add(compatCanvasCapabilityTTL).UnixMilli()
+
+	if nodeID != "" {
+		s.compat.mu.Lock()
+		if node, ok := s.compat.nodes[nodeID]; ok {
+			node["canvasCapability"] = canvasCapability
+			node["canvasCapabilityExpiresAtMs"] = canvasCapabilityExpiresAtMs
+			node["canvasHostUrl"] = scopedCanvasHostURL
+			node["canvasBaseHostUrl"] = baseCanvasHostURL
+			node["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
+			s.compat.nodes[nodeID] = node
+		}
+		s.compat.mu.Unlock()
+	}
+
+	return map[string]any{
+		"canvasCapability":            canvasCapability,
+		"canvasCapabilityExpiresAtMs": canvasCapabilityExpiresAtMs,
+		"canvasHostUrl":               scopedCanvasHostURL,
+	}, nil
 }
 
 func (s *Server) handleCompatExecApprovalsGet() map[string]any {

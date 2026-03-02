@@ -1384,13 +1384,19 @@ func TestEdgeWasmAndRoutinesPhase7Methods(t *testing.T) {
 		"id":     "edge-homo",
 		"method": "edge.homomorphic.compute",
 		"params": map[string]any{
-			"operation": "sum",
-			"values":    []any{1, 2, 3},
+			"keyId":        "key-1",
+			"operation":    "sum",
+			"revealResult": true,
+			"ciphertexts": []any{
+				homomorphicKeyBias("key-1") + 1,
+				homomorphicKeyBias("key-1") + 2,
+				homomorphicKeyBias("key-1") + 3,
+			},
 		},
 	})
 	homoResult := assertRPCResult(t, homomorphic)
-	if homoResult["result"] != float64(6) {
-		t.Fatalf("unexpected homomorphic compute result: %v", homoResult["result"])
+	if homoResult["revealedResult"] != float64(6) {
+		t.Fatalf("unexpected homomorphic compute revealedResult: %v", homoResult["revealedResult"])
 	}
 }
 
@@ -1682,12 +1688,20 @@ func TestEdgePhase7RichParityPayloads(t *testing.T) {
 		"id":     "edge-rich-homo-cipher",
 		"method": "edge.homomorphic.compute",
 		"params": map[string]any{
-			"keyId":       "key-1",
-			"operation":   "sum",
-			"ciphertexts": []any{"enc:a", "enc:b", "enc:c"},
+			"keyId":        "key-1",
+			"operation":    "sum",
+			"revealResult": true,
+			"ciphertexts": []any{
+				formatHomomorphicCiphertext("key-1", 7+homomorphicKeyBias("key-1")),
+				formatHomomorphicCiphertext("key-1", 9+homomorphicKeyBias("key-1")),
+				formatHomomorphicCiphertext("key-1", 11+homomorphicKeyBias("key-1")),
+			},
 		},
 	})
 	homo := assertRPCResult(t, homoFrame)
+	if toString(homo["scheme"], "") != edgeHomomorphicScheme {
+		t.Fatalf("expected scheme %s, got %v", edgeHomomorphicScheme, homo["scheme"])
+	}
 	if mode, _ := homo["mode"].(string); mode != "ciphertext" {
 		t.Fatalf("expected ciphertext mode, got %v", homo["mode"])
 	}
@@ -1819,13 +1833,19 @@ func TestEdgeStatefulContracts(t *testing.T) {
 		"id":     "edge-homomorphic-mean",
 		"method": "edge.homomorphic.compute",
 		"params": map[string]any{
-			"operation": "mean",
-			"values":    []any{2, 4, 6},
+			"keyId":        "key-1",
+			"operation":    "mean",
+			"revealResult": true,
+			"ciphertexts": []any{
+				2 + homomorphicKeyBias("key-1"),
+				4 + homomorphicKeyBias("key-1"),
+				6 + homomorphicKeyBias("key-1"),
+			},
 		},
 	})
 	homoMeanResult := assertRPCResult(t, homoMean)
-	if homoMeanResult["result"] != float64(4) {
-		t.Fatalf("expected mean result 4, got %v", homoMeanResult["result"])
+	if homoMeanResult["revealedResult"] != float64(4) {
+		t.Fatalf("expected mean revealedResult 4, got %v", homoMeanResult["revealedResult"])
 	}
 }
 
@@ -2377,12 +2397,16 @@ func TestEdgeHomomorphicCipherValidationParity(t *testing.T) {
 			"keyId":        "key-1",
 			"operation":    "mean",
 			"revealResult": true,
-			"ciphertexts":  []any{"enc:a", "enc:b", "enc:c"},
+			"ciphertexts": []any{
+				2 + homomorphicKeyBias("key-1"),
+				4 + homomorphicKeyBias("key-1"),
+				6 + homomorphicKeyBias("key-1"),
+			},
 		},
 	})
 	result := assertRPCResult(t, validMean)
-	if mode, _ := result["mode"].(string); mode != "ciphertext" {
-		t.Fatalf("expected ciphertext mode, got %v", result["mode"])
+	if toString(result["scheme"], "") != edgeHomomorphicScheme {
+		t.Fatalf("expected homomorphic scheme %s, got %v", edgeHomomorphicScheme, result["scheme"])
 	}
 }
 
@@ -2630,8 +2654,8 @@ func TestAllSupportedMethodsDispatchWithoutNotImplemented(t *testing.T) {
 	}
 
 	methods := s.methods.SupportedMethods()
-	if len(methods) != 133 {
-		t.Fatalf("supported method count changed: got=%d want=133", len(methods))
+	if len(methods) != 134 {
+		t.Fatalf("supported method count changed: got=%d want=134", len(methods))
 	}
 	for idx, method := range methods {
 		resolved := s.methods.Resolve(method)
@@ -2653,6 +2677,73 @@ func TestAllSupportedMethodsDispatchWithoutNotImplemented(t *testing.T) {
 				t.Fatalf("method %q resolved %q still hits compat-fallback status", method, resolved.Canonical)
 			}
 		}
+	}
+}
+
+func TestNodeCanvasCapabilityRefreshParityContract(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-node-canvas-refresh"
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	unavailable := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "canvas-refresh-unavailable",
+		"method": "node.canvas.capability.refresh",
+		"params": map[string]any{},
+	})
+	assertRPCErrorCode(t, unavailable, -32040)
+
+	okFrame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "canvas-refresh-ok",
+		"method": "node.canvas.capability.refresh",
+		"params": map[string]any{
+			"canvasHostUrl": "http://127.0.0.1:18789",
+		},
+	})
+	okResult := assertRPCResult(t, okFrame)
+	capability := toString(okResult["canvasCapability"], "")
+	if capability == "" {
+		t.Fatalf("expected non-empty canvasCapability")
+	}
+	canvasHostURL := toString(okResult["canvasHostUrl"], "")
+	if !strings.Contains(canvasHostURL, "/__openclaw__/cap/") {
+		t.Fatalf("expected scoped canvas host url, got %q", canvasHostURL)
+	}
+	expiresAt := int64(toFloat64(okResult["canvasCapabilityExpiresAtMs"]))
+	if expiresAt <= time.Now().UTC().UnixMilli() {
+		t.Fatalf("expected future canvasCapabilityExpiresAtMs, got %v", okResult["canvasCapabilityExpiresAtMs"])
+	}
+}
+
+func TestSecretsReloadParityWarningCount(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.StatePath = "memory://test-secrets-reload"
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	frame := rpcCall(t, ts.URL, map[string]any{
+		"type":   "req",
+		"id":     "secrets-reload",
+		"method": "secrets.reload",
+		"params": map[string]any{
+			"keys": []any{"OPENAI_API_KEY", "ANTHROPIC_API_KEY"},
+		},
+	})
+	result := assertRPCResult(t, frame)
+	if !toBool(result["ok"], false) {
+		t.Fatalf("expected secrets.reload ok=true, got %v", result["ok"])
+	}
+	warningCount := int(toFloat64(result["warningCount"]))
+	if warningCount != 2 {
+		t.Fatalf("expected warningCount=2, got %v", result["warningCount"])
 	}
 }
 

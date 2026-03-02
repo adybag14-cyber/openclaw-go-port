@@ -8,7 +8,7 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 | `src/config.rs` | `go-agent/internal/config` | done | TOML + env loading, runtime profile validation, and security defaults are complete |
 | `src/gateway_server.rs` | `go-agent/internal/gateway` | done | HTTP health/RPC server, auth/connect/session lifecycle, scheduler routing, and edge handlers shipped |
 | `src/protocol.rs` | `go-agent/internal/protocol` | done | Framing, method-family classification, rpc request/response/error helpers, fixture corpus tests |
-| `src/gateway.rs` | `go-agent/internal/rpc` + `internal/gateway` | done | Canonical method registry and gateway dispatch parity surface delivered (`133/133` method match with Rust); `security.audit` remains callable but intentionally non-advertised |
+| `src/gateway.rs` | `go-agent/internal/rpc` + `internal/gateway` | done | Canonical method registry and gateway dispatch parity surface delivered (`134` advertised methods in Go, including upstream `v2026.3.1` additions `secrets.reload` + `node.canvas.capability.refresh`); `security.audit` remains callable but intentionally non-advertised |
 | `src/scheduler.rs` | `go-agent/internal/scheduler` | done | Queue/worker execution + `agent.wait` status contracts and scheduler metrics delivered |
 | `src/runtime.rs` | `go-agent/internal/runtime` | done | Runtime snapshot/profile model implemented (`core`/`edge`, `audit-only` vs enforcing mode) |
 | `src/tool_registry.rs` | `go-agent/internal/tools` | done | Tool catalog and runtime provider registry flow delivered |
@@ -66,3 +66,5 @@ Status legend: `not-started`, `in-progress`, `done`, `deferred`
 - Slice 28 complete: Telegram delivery hardening (`/command@bot` parsing, `/start`/`/help`, long-message chunking) and expanded cross-platform release matrix (`windows/arm64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`).
 - Slice 29 complete: Rust-to-Go provider parity closure in `models.list`/Telegram model catalog (`claude`, `groq`, `zhipuai`, `zai`) plus websocket root compatibility route for legacy bridge clients (`ws://host:port` without `/ws`).
 - Slice 30 complete: browser keyless parity hardening (provider-aware browser auth gate, extended `qwen/mercury2/glm5` alias routing, configurable web-login TTL, and deeper doctor/security-audit bridge diagnostics including `/health` probing and systemd conflict detection).
+- Slice 31 complete: advanced edge depth closure for enclave/homomorphic surfaces (hardware-signal-aware enclave mode detection + strict Rust-style homomorphic ciphertext contract and compute semantics, with full `go test ./...` validation).
+- Slice 32 complete: upstream `openclaw` `v2026.3.1` command-surface parity (`node.canvas.capability.refresh` added to Go registry/dispatcher with scoped canvas token minting contract, plus `secrets.reload` payload alignment with `warningCount` semantics and gateway coverage tests).

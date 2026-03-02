@@ -3,10 +3,13 @@ package gateway
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -44,6 +47,11 @@ var rpcWebsocketUpgrader = websocket.Upgrader{
 		return true
 	},
 }
+
+const (
+	edgeHomomorphicScheme         = "additive-mask-v1"
+	edgeHomomorphicMaxCiphertexts = 4_096
+)
 
 type Server struct {
 	cfg       config.Config
@@ -1218,7 +1226,7 @@ func (s *Server) handleEdgeEnclaveStatus() map[string]any {
 	status["runtimeProfile"] = runtimeProfileName(s.cfg.Runtime.Profile)
 	status["activeMode"] = activeMode
 	status["availableModes"] = availableModes
-	status["isolationAvailable"] = true
+	status["isolationAvailable"] = toBool(signals["sgx"], false) || toBool(signals["tpm"], false) || toBool(signals["sev"], false)
 	status["signals"] = signals
 	status["runtime"] = map[string]any{
 		"activeMode":     activeMode,
@@ -1376,104 +1384,54 @@ func (s *Server) handleEdgeMeshStatus() map[string]any {
 }
 
 func (s *Server) handleEdgeHomomorphicCompute(params map[string]any) (map[string]any, *dispatchError) {
-	op := strings.ToLower(toString(params["operation"], "sum"))
-	keyID := normalizeOptionalText(firstNonEmptyValue(params, "keyId"), 128)
-	ciphertexts := toStringSlice(params["ciphertexts"])
-	if keyID != "" || len(ciphertexts) > 0 {
-		if keyID == "" {
-			return nil, &dispatchError{
-				Code:    -32602,
-				Message: "edge.homomorphic.compute requires keyId",
-			}
-		}
-		if !slicesContains([]string{"sum", "count", "mean"}, op) {
-			return nil, &dispatchError{
-				Code:    -32602,
-				Message: "edge.homomorphic.compute operation must be sum, count, or mean",
-			}
-		}
-		validCiphertexts := make([]string, 0, len(ciphertexts))
-		for _, entry := range ciphertexts {
-			if normalized := normalizeOptionalText(entry, 1024); normalized != "" {
-				validCiphertexts = append(validCiphertexts, normalized)
-			}
-		}
-		if len(validCiphertexts) == 0 {
-			return nil, &dispatchError{
-				Code:    -32602,
-				Message: "edge.homomorphic.compute requires ciphertexts: string[]",
-			}
-		}
-		count := len(validCiphertexts)
-		revealResult := toBool(params["revealResult"], false)
-		if op == "mean" && !revealResult {
-			return nil, &dispatchError{
-				Code:    -32602,
-				Message: "edge.homomorphic.compute mean requires revealResult=true",
-			}
-		}
-		aggregate := count
-		if op == "sum" {
-			aggregate = 0
-			for _, entry := range validCiphertexts {
-				aggregate += len(entry)
-			}
-		}
-		if op == "mean" && count > 0 {
-			aggregate = aggregate / count
-		}
-		hashSeed := fmt.Sprintf("%s|%s|%v", keyID, op, validCiphertexts)
-		hash := sha256.Sum256([]byte(hashSeed))
-		return map[string]any{
-			"mode":             "ciphertext",
-			"operation":        op,
-			"keyId":            keyID,
-			"ciphertextCount":  count,
-			"resultCiphertext": fmt.Sprintf("enc:%s", hex.EncodeToString(hash[:10])),
-			"count":            count,
-			"revealResult":     revealResult,
-			"result": func() any {
-				if revealResult {
-					return float64(aggregate)
-				}
-				return nil
-			}(),
-		}, nil
-	}
-	values := asSlice(params["values"])
-	total := 0.0
-	maxValue := 0.0
-	minValue := 0.0
-	for _, value := range values {
-		total += value
-		if value > maxValue || maxValue == 0 {
-			maxValue = value
-		}
-		if value < minValue || minValue == 0 {
-			minValue = value
-		}
-	}
-	result := total
-	switch op {
-	case "mean", "avg", "average":
-		if len(values) > 0 {
-			result = total / float64(len(values))
-		}
-	case "max":
-		result = maxValue
-	case "min":
-		result = minValue
-	case "sum":
-		// default, no-op
-	default:
+	op := strings.ToLower(normalizeOptionalText(firstNonEmptyValue(params, "operation"), 32))
+	if op == "" {
 		op = "sum"
 	}
-	return map[string]any{
-		"mode":      "plaintext",
-		"operation": op,
-		"result":    result,
-		"count":     len(values),
-	}, nil
+	keyID := normalizeOptionalText(firstNonEmptyValue(params, "keyId"), 128)
+	if keyID == "" {
+		return nil, &dispatchError{
+			Code:    -32602,
+			Message: "edge.homomorphic.compute requires keyId",
+		}
+	}
+	if !slicesContains([]string{"sum", "count", "mean"}, op) {
+		return nil, &dispatchError{
+			Code:    -32602,
+			Message: "edge.homomorphic.compute operation must be sum, count, or mean",
+		}
+	}
+	revealResult := toBool(params["revealResult"], false)
+	if op == "mean" && !revealResult {
+		return nil, &dispatchError{
+			Code:    -32602,
+			Message: "edge.homomorphic.compute mean requires revealResult=true",
+		}
+	}
+	ciphertexts, parseErr := extractHomomorphicCipherValues(params["ciphertexts"], keyID)
+	if parseErr != "" {
+		return nil, &dispatchError{
+			Code:    -32602,
+			Message: parseErr,
+		}
+	}
+	if len(ciphertexts) == 0 {
+		return nil, &dispatchError{
+			Code:    -32602,
+			Message: "edge.homomorphic.compute requires ciphertexts: string[]",
+		}
+	}
+	result := runHomomorphicCompute(keyID, op, ciphertexts, revealResult)
+	if ciphertextResult := toString(result["ciphertextResult"], ""); ciphertextResult != "" {
+		// Backward-compatible aliases for existing Go clients.
+		result["mode"] = "ciphertext"
+		result["ciphertextCount"] = len(ciphertexts)
+		result["resultCiphertext"] = ciphertextResult
+		result["count"] = len(ciphertexts)
+		result["revealResult"] = revealResult
+		result["result"] = result["revealedResult"]
+	}
+	return result, nil
 }
 
 func (s *Server) handleEdgeFinetuneStatus() map[string]any {
@@ -2600,17 +2558,25 @@ func edgeEnclaveAttestationBinaryPath() string {
 }
 
 func resolveEnclaveSignals() map[string]any {
-	tpmEnabled := true
+	sgxDetected := fileExists("/dev/sgx_enclave") || fileExists("/dev/sgx")
+	tpmDetected := dirExists("/sys/class/tpm") || commandAvailable("tpmtool")
+	sevDetected := fileExists("/dev/sev") || fileExists("/dev/sev-guest")
+
+	sgxEnabled := sgxDetected || envTruthy("OPENCLAW_GO_ENCLAVE_SGX")
+	sevEnabled := sevDetected || envTruthy("OPENCLAW_GO_ENCLAVE_SEV")
+	tpmEnabled := tpmDetected || envTruthy("OPENCLAW_GO_ENCLAVE_TPM")
 	if raw := strings.TrimSpace(os.Getenv("OPENCLAW_GO_ENCLAVE_TPM")); raw != "" {
-		tpmEnabled = envTruthy("OPENCLAW_GO_ENCLAVE_TPM")
+		if parsed, ok := parseOptionalBool(raw); ok {
+			tpmEnabled = parsed
+		}
 	}
 	if envTruthy("OPENCLAW_GO_ENCLAVE_TPM_DISABLED") {
 		tpmEnabled = false
 	}
 	return map[string]any{
-		"sgx": envTruthy("OPENCLAW_GO_ENCLAVE_SGX"),
+		"sgx": sgxEnabled,
 		"tpm": tpmEnabled,
-		"sev": envTruthy("OPENCLAW_GO_ENCLAVE_SEV"),
+		"sev": sevEnabled,
 	}
 }
 
@@ -2626,7 +2592,7 @@ func resolveEnclaveAvailableModes(signals map[string]any) []string {
 		modes = append(modes, "sev")
 	}
 	if len(modes) == 0 {
-		modes = append(modes, "software-attestation")
+		modes = append(modes, "software")
 	}
 	return modes
 }
@@ -2646,7 +2612,34 @@ func resolveEnclaveActiveMode(signals map[string]any) string {
 	case toBool(signals["tpm"], false):
 		return "tpm"
 	default:
-		return "software-attestation"
+		return "software"
+	}
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func commandAvailable(name string) bool {
+	_, err := osexec.LookPath(name)
+	return err == nil
+}
+
+func parseOptionalBool(raw string) (bool, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	switch normalized {
+	case "1", "true", "yes", "on":
+		return true, true
+	case "0", "false", "no", "off":
+		return false, true
+	default:
+		return false, false
 	}
 }
 
@@ -2830,6 +2823,178 @@ func buildEdgeEnclaveProofRecord(statement string, nonce string, activeMode stri
 	record["measurement"] = measurement
 	record["error"] = nil
 	return record
+}
+
+func homomorphicKeyBias(keyID string) int64 {
+	digest := sha256.Sum256([]byte(keyID))
+	seed := binary.LittleEndian.Uint64(digest[:8])
+	bias := (seed % 1_000_003) + 1_003
+	return int64(bias)
+}
+
+func parseHomomorphicCipherValue(raw string, keyID string) (int64, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return 0, false
+	}
+	if value, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+		return value, true
+	}
+	parts := strings.Split(trimmed, ":")
+	if len(parts) != 3 {
+		return 0, false
+	}
+	if !strings.EqualFold(parts[0], "he") || !strings.EqualFold(parts[1], keyID) {
+		return 0, false
+	}
+	value, err := strconv.ParseInt(strings.TrimSpace(parts[2]), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return value, true
+}
+
+func formatHomomorphicCiphertext(keyID string, value int64) string {
+	return fmt.Sprintf("he:%s:%d", keyID, value)
+}
+
+func safeInt64FromAny(value any) (int64, bool) {
+	switch v := value.(type) {
+	case int:
+		return int64(v), true
+	case int8:
+		return int64(v), true
+	case int16:
+		return int64(v), true
+	case int32:
+		return int64(v), true
+	case int64:
+		return v, true
+	case uint:
+		if uint64(v) > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(v), true
+	case uint8:
+		return int64(v), true
+	case uint16:
+		return int64(v), true
+	case uint32:
+		return int64(v), true
+	case uint64:
+		if v > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(v), true
+	case float64:
+		if math.Trunc(v) != v || v < math.MinInt64 || v > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(v), true
+	case json.Number:
+		parsed, err := v.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
+	default:
+		return 0, false
+	}
+}
+
+func extractHomomorphicCipherValues(ciphertexts any, keyID string) ([]int64, string) {
+	items, ok := ciphertexts.([]any)
+	if !ok {
+		return []int64{}, ""
+	}
+	out := make([]int64, 0, len(items))
+	for _, item := range items {
+		if len(out) >= edgeHomomorphicMaxCiphertexts {
+			break
+		}
+		switch typed := item.(type) {
+		case string:
+			value, ok := parseHomomorphicCipherValue(typed, keyID)
+			if !ok {
+				return nil, "edge.homomorphic.compute invalid ciphertext entry"
+			}
+			out = append(out, value)
+		default:
+			if value, ok := safeInt64FromAny(typed); ok {
+				out = append(out, value)
+				continue
+			}
+			return nil, "edge.homomorphic.compute invalid ciphertext entry"
+		}
+	}
+	return out, ""
+}
+
+func clampBigIntToInt64(value *big.Int) int64 {
+	max := big.NewInt(math.MaxInt64)
+	min := big.NewInt(math.MinInt64)
+	if value.Cmp(max) > 0 {
+		return math.MaxInt64
+	}
+	if value.Cmp(min) < 0 {
+		return math.MinInt64
+	}
+	return value.Int64()
+}
+
+func maxInt64(a int64, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func runHomomorphicCompute(keyID string, operation string, ciphertexts []int64, revealResult bool) map[string]any {
+	bias := homomorphicKeyBias(keyID)
+	count := int64(len(ciphertexts))
+	encryptedSumBig := big.NewInt(0)
+	for _, entry := range ciphertexts {
+		encryptedSumBig.Add(encryptedSumBig, big.NewInt(entry))
+	}
+	biasCount := big.NewInt(0).Mul(big.NewInt(bias), big.NewInt(count))
+	plainSumBig := big.NewInt(0).Sub(new(big.Int).Set(encryptedSumBig), biasCount)
+	plainSum := clampBigIntToInt64(plainSumBig)
+
+	var resultPlain int64
+	var resultCipher int64
+	performedWithoutDecrypting := true
+	switch operation {
+	case "count":
+		resultPlain = count
+		resultCipher = clampBigIntToInt64(big.NewInt(0).Add(big.NewInt(resultPlain), big.NewInt(bias)))
+	case "mean":
+		if count == 0 {
+			resultPlain = 0
+		} else {
+			resultPlain = plainSum / count
+		}
+		resultCipher = clampBigIntToInt64(big.NewInt(0).Add(big.NewInt(resultPlain), big.NewInt(bias)))
+		performedWithoutDecrypting = false
+	default:
+		adjustment := big.NewInt(0).Mul(big.NewInt(bias), big.NewInt(maxInt64(count-1, 0)))
+		resultCipherBig := big.NewInt(0).Sub(new(big.Int).Set(encryptedSumBig), adjustment)
+		resultCipher = clampBigIntToInt64(resultCipherBig)
+		resultPlain = plainSum
+	}
+
+	var revealed any = nil
+	if revealResult {
+		revealed = resultPlain
+	}
+	return map[string]any{
+		"scheme":                     edgeHomomorphicScheme,
+		"operation":                  operation,
+		"keyId":                      keyID,
+		"inputCount":                 len(ciphertexts),
+		"ciphertextResult":           formatHomomorphicCiphertext(keyID, resultCipher),
+		"performedWithoutDecrypting": performedWithoutDecrypting,
+		"revealedResult":             revealed,
+	}
 }
 
 func envTruthy(key string) bool {

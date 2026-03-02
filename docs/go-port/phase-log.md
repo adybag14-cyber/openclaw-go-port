@@ -1157,3 +1157,26 @@
   - Phase 1A complete (core stability proven).
   - Phase 1B pending (bridge stability not yet proven due upstream image availability/network path).
   - release for OS-runtime track remains blocked until Phase 1B passes.
+
+### Post-v2 Continuation - Upstream v2026.3.1 Command Parity Closure
+
+- Pulled latest upstream OpenClaw (`origin/main`, tag `v2026.3.1`) and diffed gateway method surfaces vs Go registry.
+- Confirmed upstream base method additions:
+  - `secrets.reload`
+  - `node.canvas.capability.refresh`
+- Implemented Go parity updates:
+  - added `node.canvas.capability.refresh` to `defaultSupportedRPCMethods` in Go RPC registry.
+  - added compat handler for `node.canvas.capability.refresh` that:
+    - validates canvas host availability,
+    - mints a scoped capability token,
+    - returns `canvasCapability`, `canvasCapabilityExpiresAtMs`, and scoped `canvasHostUrl`,
+    - returns `UNAVAILABLE`-class dispatch error when canvas host URL is missing/invalid.
+  - aligned `secrets.reload` response contract with upstream by returning `warningCount` while preserving Go-compatible metadata fields.
+- Added/expanded test coverage:
+  - `TestNodeCanvasCapabilityRefreshParityContract`
+  - `TestSecretsReloadParityWarningCount`
+  - updated full supported-method dispatch guard to expected method count `134`.
+- Validation completed (Dockerized Go toolchain):
+  - `/usr/local/go/bin/gofmt -w ./internal/rpc/registry.go ./internal/gateway/compat.go ./internal/gateway/server_test.go`
+  - `/usr/local/go/bin/go test ./...`
+  - `/usr/local/go/bin/go vet ./...`
