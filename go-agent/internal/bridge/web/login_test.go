@@ -130,3 +130,33 @@ func TestSummaryByProviderAndStatus(t *testing.T) {
 		t.Fatalf("expected chatgpt rejected=1, got %v", byProvider["chatgpt"]["rejected"])
 	}
 }
+
+func TestLatestAuthorizedSessionByProvider(t *testing.T) {
+	m := NewManager(5 * time.Minute)
+	chat := m.Start(StartOptions{Provider: "chatgpt", Model: "gpt-5.2"})
+	qwen := m.Start(StartOptions{Provider: "qwen", Model: "qwen3.5-plus"})
+	if _, err := m.Complete(chat.ID, chat.Code); err != nil {
+		t.Fatalf("complete chatgpt failed: %v", err)
+	}
+	if _, err := m.Complete(qwen.ID, qwen.Code); err != nil {
+		t.Fatalf("complete qwen failed: %v", err)
+	}
+
+	if !m.HasAuthorizedSessionForProvider("chatgpt") {
+		t.Fatalf("expected authorized session for chatgpt")
+	}
+	if !m.HasAuthorizedSessionForProvider("qwen") {
+		t.Fatalf("expected authorized session for qwen")
+	}
+	if m.HasAuthorizedSessionForProvider("openrouter") {
+		t.Fatalf("did not expect authorized session for openrouter")
+	}
+
+	session, ok := m.LatestAuthorizedSession("qwen")
+	if !ok {
+		t.Fatalf("expected latest authorized qwen session")
+	}
+	if session.ID != qwen.ID {
+		t.Fatalf("expected qwen session %s, got %s", qwen.ID, session.ID)
+	}
+}

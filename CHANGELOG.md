@@ -5,6 +5,32 @@
 ### Highlights
 - No unreleased changes.
 
+## v2.13.0-go - 2026-03-02
+
+### Highlights
+- Fixed a scheduler race condition exposed by race-enabled tests:
+  - `scheduler.Submit` now returns an immutable queued snapshot captured before worker mutation can occur.
+  - Added scheduler regression coverage for queued submit snapshots under high submit cadence.
+- Hardened browser/Telegram auth-session routing:
+  - browser request gating is now provider-aware when selecting authorized sessions.
+  - browser requests now auto-attach provider-matching `loginSessionId` when omitted and an authorized session exists.
+  - Telegram runtime now clears stale scoped auth mappings and falls back to the latest authorized provider session.
+- Improved default memory persistence posture:
+  - runtime default `state_path` changed from volatile `memory://...` to `.openclaw-go/state/memory.json`.
+  - added config regression assertion to prevent accidental reversion to volatile defaults.
+- Added Telegram completion context budgeting:
+  - bounded total completion context size while preserving system prompt + newest turns.
+  - reduces timeout risk from oversized Telegram history payloads.
+
+### Validation
+- Dockerized formatting + validation:
+  - `gofmt -w ./internal/scheduler/scheduler.go ./internal/scheduler/scheduler_test.go ./internal/config/config.go ./internal/config/config_test.go ./internal/bridge/web/login.go ./internal/bridge/web/login_test.go ./internal/gateway/server.go ./internal/gateway/telegram_runtime.go ./internal/gateway/telegram_runtime_test.go`
+  - `go test ./...`
+  - `go vet ./...`
+  - `go test -race ./...`
+- Release build matrix:
+  - `go-agent/scripts/build-matrix.sh 2.13.0 ../dist/release-v2.13.0-go-assets`
+
 ## v2.12.0-go - 2026-03-02
 
 ### Highlights

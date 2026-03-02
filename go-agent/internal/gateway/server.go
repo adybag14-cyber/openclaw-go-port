@@ -700,6 +700,7 @@ func (s *Server) handleOAuthLogout(params map[string]any) map[string]any {
 
 func (s *Server) enqueueRuntimeRequest(requestID string, canonical string, params map[string]any) (map[string]any, *dispatchError) {
 	if (canonical == "browser.request" || canonical == "browser.open") && browserRequestRequiresAuthorizedSession(params) {
+		provider := inferBrowserProvider(params)
 		loginID := strings.TrimSpace(toString(params["loginSessionId"], ""))
 		if loginID != "" {
 			if !s.webLogin.IsAuthorized(loginID) {
@@ -711,10 +712,19 @@ func (s *Server) enqueueRuntimeRequest(requestID string, canonical string, param
 					},
 				}
 			}
-		} else if !s.webLogin.HasAuthorizedSession() {
+		} else {
+			if session, ok := s.webLogin.LatestAuthorizedSession(provider); ok {
+				params["loginSessionId"] = session.ID
+				loginID = session.ID
+			}
+		}
+		if loginID == "" && !s.webLogin.HasAuthorizedSessionForProvider(provider) {
 			return nil, &dispatchError{
 				Code:    -32040,
-				Message: "browser bridge requires active authorized login session",
+				Message: "browser bridge requires active authorized login session for provider",
+				Details: map[string]any{
+					"provider": provider,
+				},
 			}
 		}
 	}

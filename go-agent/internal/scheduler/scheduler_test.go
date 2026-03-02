@@ -58,3 +58,23 @@ func TestFailurePath(t *testing.T) {
 		t.Fatalf("expected error text on failed job")
 	}
 }
+
+func TestSubmitReturnsQueuedSnapshot(t *testing.T) {
+	s := New(1, 128, func(_ context.Context, _ Job) (any, error) {
+		return map[string]any{"ok": true}, nil
+	})
+	defer s.Stop()
+
+	for i := 0; i < 200; i++ {
+		job, err := s.Submit("req-race", "sess-race", "agent", map[string]any{"i": i})
+		if err != nil {
+			t.Fatalf("submit failed at %d: %v", i, err)
+		}
+		if job.State != JobQueued {
+			t.Fatalf("submit should return queued snapshot, got %s at %d", job.State, i)
+		}
+		if job.SubmittedAt.IsZero() {
+			t.Fatalf("submit should return non-zero submittedAt at %d", i)
+		}
+	}
+}

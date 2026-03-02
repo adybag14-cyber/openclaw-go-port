@@ -206,15 +206,38 @@ func (m *Manager) LogoutAll() int {
 }
 
 func (m *Manager) HasAuthorizedSession() bool {
+	_, ok := m.LatestAuthorizedSession("")
+	return ok
+}
+
+func (m *Manager) HasAuthorizedSessionForProvider(provider string) bool {
+	_, ok := m.LatestAuthorizedSession(provider)
+	return ok
+}
+
+func (m *Manager) LatestAuthorizedSession(provider string) (Session, bool) {
+	providerKey := normalizeProviderAlias(provider)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	var (
+		latest Session
+		found  bool
+	)
 	for _, state := range m.sessions {
 		session := m.applyExpiry(state.session)
-		if session.Status == LoginAuthorized {
-			return true
+		if session.Status != LoginAuthorized {
+			continue
+		}
+		if providerKey != "" && normalizeProviderAlias(session.Provider) != providerKey {
+			continue
+		}
+		if !found || session.CreatedAt > latest.CreatedAt {
+			latest = session
+			found = true
 		}
 	}
-	return false
+	return latest, found
 }
 
 func (m *Manager) IsAuthorized(id string) bool {
@@ -262,20 +285,23 @@ func (m *Manager) Summary() map[string]any {
 			byProvider[provider] = bucket
 		}
 		bucket["total"]++
-		switch session.Status {
-		case LoginAuthorized:
+		if session.Status == LoginAuthorized {
 			authorized++
 			bucket["authorized"]++
-		case LoginExpired:
+			continue
+		}
+		if session.Status == LoginExpired {
 			expired++
 			bucket["expired"]++
-		case LoginRejected:
+			continue
+		}
+		if session.Status == LoginRejected {
 			rejected++
 			bucket["rejected"]++
-		default:
-			pending++
-			bucket["pending"]++
+			continue
 		}
+		pending++
+		bucket["pending"]++
 	}
 	return map[string]any{
 		"total":      len(sessions),

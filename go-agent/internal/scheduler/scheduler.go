@@ -113,6 +113,7 @@ func (s *Scheduler) Submit(requestID string, sessionID string, method string, pa
 		},
 		done: make(chan struct{}),
 	}
+	submitted := cloneJob(rec.job)
 
 	s.mu.Lock()
 	s.jobs[id] = rec
@@ -120,7 +121,8 @@ func (s *Scheduler) Submit(requestID string, sessionID string, method string, pa
 
 	select {
 	case s.queue <- id:
-		return rec.job, nil
+		// Return an immutable snapshot captured before workers can mutate rec.job.
+		return submitted, nil
 	default:
 		s.mu.Lock()
 		delete(s.jobs, id)

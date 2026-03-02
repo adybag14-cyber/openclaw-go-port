@@ -366,3 +366,93 @@ func TestProcessTelegramUpdateUsesSessionHistoryAndAuthScope(t *testing.T) {
 		t.Fatalf("expected second payload messages to include prior session memory")
 	}
 }
+
+func TestProcessTelegramUpdateFallsBackToLatestAuthorizedProviderSession(t *testing.T) {
+	var bridgeMu sync.Mutex
+	var bridgePayload map[string]any
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected bridge endpoint: %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]any
+		_ = json.Unmarshal(body, &payload)
+		bridgeMu.Lock()
+		bridgePayload = payload
+		bridgeMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cmpl-test","model":"gpt-5.2","choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer bridge.Close()
+
+	telegramAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/bottoken/sendMessage", "/bottoken/sendChatAction":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":222,"chat":{"id":902},"date":1700000000}}`))
+		default:
+			t.Fatalf("unexpected telegram endpoint: %s", r.URL.Path)
+		}
+	}))
+	defer telegramAPI.Close()
+	t.Setenv("OPENCLAW_GO_TELEGRAM_API_BASE", telegramAPI.URL)
+
+	cfg := config.Default()
+	cfg.Channels.Telegram.BotToken = "token"
+	cfg.Runtime.StatePath = "memory://telegram-runtime-fallback-auth"
+	cfg.Runtime.BrowserBridge.Enabled = true
+	cfg.Runtime.BrowserBridge.Endpoint = bridge.URL
+	cfg.Runtime.BrowserBridge.RequestTimeoutMs = 5000
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+
+	stale := s.webLogin.Start(webbridge.StartOptions{Provider: "chatgpt", Model: "gpt-5.2"})
+	s.compat.setTelegramAuthScoped("902", "chatgpt", "", stale.ID)
+
+	authorized := s.webLogin.Start(webbridge.StartOptions{Provider: "chatgpt", Model: "gpt-5.2"})
+	if _, err := s.webLogin.Complete(authorized.ID, authorized.Code); err != nil {
+		t.Fatalf("failed to authorize fallback session: %v", err)
+	}
+
+	update := telegramInboundUpdate{
+		UpdateID: 12,
+		Message: &telegramInboundEntry{
+			Text: "hello fallback auth",
+			Chat: telegramInboundChat{ID: 902},
+			From: telegramInboundUser{ID: 66, IsBot: false},
+		},
+	}
+	if err := s.processTelegramUpdate(context.Background(), update); err != nil {
+		t.Fatalf("processTelegramUpdate fallback auth failed: %v", err)
+	}
+
+	bridgeMu.Lock()
+	defer bridgeMu.Unlock()
+	if bridgePayload == nil {
+		t.Fatalf("expected bridge payload to be captured")
+	}
+	if got := strings.TrimSpace(toString(bridgePayload["loginSessionId"], "")); got != authorized.ID {
+		t.Fatalf("expected fallback authorized loginSessionId %q, got %q", authorized.ID, got)
+	}
+}
+
+func TestTrimTelegramMessagesToBudgetKeepsMostRecentMessages(t *testing.T) {
+	messages := []map[string]any{
+		{"role": "system", "content": "1234567890"},
+		{"role": "user", "content": "aaaa"},
+		{"role": "assistant", "content": "bbbb"},
+		{"role": "user", "content": "cccc"},
+	}
+
+	trimmed := trimTelegramMessagesToBudget(messages, 18)
+	if len(trimmed) != 3 {
+		t.Fatalf("expected 3 messages after budget trim, got %d", len(trimmed))
+	}
+	if toString(trimmed[0]["role"], "") != "system" {
+		t.Fatalf("expected first message to remain system, got %v", trimmed[0]["role"])
+	}
+	if toString(trimmed[len(trimmed)-1]["content"], "") != "cccc" {
+		t.Fatalf("expected newest user message to be retained")
+	}
+}

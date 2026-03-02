@@ -56,6 +56,7 @@ const (
 	telegramContextHistoryLimit = 24
 	telegramContextRecallLimit  = 6
 	telegramContextMaxChars     = 1200
+	telegramCompletionMaxChars  = 12000
 )
 
 func (u telegramInboundUpdate) pickMessage() *telegramInboundEntry {
@@ -270,12 +271,7 @@ func (s *Server) buildTelegramAssistantReply(ctx context.Context, target string,
 	invokeCtx, cancel := context.WithTimeout(ctx, timeout+10*time.Second)
 	defer cancel()
 
-	loginSessionID := strings.TrimSpace(s.compat.getTelegramAuthScoped(target, provider, ""))
-	if loginSessionID != "" && !s.webLogin.IsAuthorized(loginSessionID) {
-		// Clear stale scoped auth mapping so Telegram flows recover instead of looping on an invalid login ID.
-		s.compat.setTelegramAuthScoped(target, provider, "", "")
-		loginSessionID = ""
-	}
+	loginSessionID := s.resolveTelegramAuthorizedLoginSession(target, provider)
 
 	messages := s.buildTelegramCompletionMessages(sessionID, userMessage)
 	input := map[string]any{
@@ -340,6 +336,37 @@ func resolveTelegramSessionID(message *telegramInboundEntry) string {
 	return fmt.Sprintf("tg-chat-%d", message.Chat.ID)
 }
 
+func (s *Server) resolveTelegramAuthorizedLoginSession(target string, provider string) string {
+	providerKey := normalizeProviderID(provider)
+	if providerKey == "" {
+		providerKey = "chatgpt"
+	}
+
+	scoped := strings.TrimSpace(s.compat.getTelegramAuthScoped(target, providerKey, ""))
+	if scoped != "" {
+		if s.webLogin.IsAuthorized(scoped) {
+			return scoped
+		}
+		// Clear stale provider-scoped mapping so future auth flows recover cleanly.
+		s.compat.setTelegramAuthScoped(target, providerKey, "", "")
+	}
+
+	targetWide := strings.TrimSpace(s.compat.getTelegramAuthScoped(target, "", ""))
+	if targetWide != "" && s.webLogin.IsAuthorized(targetWide) {
+		session, ok := s.webLogin.Get(targetWide)
+		if ok && normalizeProviderID(session.Provider) == providerKey {
+			s.compat.setTelegramAuthScoped(target, providerKey, "", targetWide)
+			return targetWide
+		}
+	}
+
+	if session, ok := s.webLogin.LatestAuthorizedSession(providerKey); ok {
+		s.compat.setTelegramAuthScoped(target, providerKey, "", session.ID)
+		return session.ID
+	}
+	return ""
+}
+
 func (s *Server) buildTelegramCompletionMessages(sessionID string, userMessage string) []map[string]any {
 	trimmedUser := strings.TrimSpace(userMessage)
 	toolSummary := summarizeTelegramToolCatalog(s.tools.Catalog())
@@ -388,7 +415,7 @@ func (s *Server) buildTelegramCompletionMessages(sessionID string, userMessage s
 		}
 	}
 
-	return messages
+	return trimTelegramMessagesToBudget(messages, telegramCompletionMaxChars)
 }
 
 func summarizeTelegramToolCatalog(catalog []toolruntime.ToolSpec) string {
@@ -481,6 +508,45 @@ func telegramMessagesEndWithUser(messages []map[string]any, userMessage string) 
 	}
 	content := strings.TrimSpace(toString(last["content"], ""))
 	return content == strings.TrimSpace(userMessage)
+}
+
+func trimTelegramMessagesToBudget(messages []map[string]any, maxChars int) []map[string]any {
+	if len(messages) <= 1 || maxChars <= 0 {
+		return messages
+	}
+
+	system := messages[0]
+	systemChars := len(toString(system["content"], ""))
+	remaining := maxChars - systemChars
+	if remaining <= 0 {
+		return []map[string]any{system}
+	}
+
+	tail := make([]map[string]any, 0, len(messages)-1)
+	for i := len(messages) - 1; i >= 1; i-- {
+		content := strings.TrimSpace(toString(messages[i]["content"], ""))
+		if content == "" {
+			continue
+		}
+		size := len(content)
+		if size > remaining {
+			continue
+		}
+		remaining -= size
+		tail = append(tail, messages[i])
+	}
+	reverseTelegramMessages(tail)
+
+	out := make([]map[string]any, 0, len(tail)+1)
+	out = append(out, system)
+	out = append(out, tail...)
+	return out
+}
+
+func reverseTelegramMessages(messages []map[string]any) {
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
+	}
 }
 
 func (s *Server) startTelegramTypingLoop(ctx context.Context, target string) context.CancelFunc {

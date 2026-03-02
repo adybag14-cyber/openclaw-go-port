@@ -1,5 +1,29 @@
 # Go Port Phase Log
 
+## 2026-03-02
+
+### Edge-Case Hardening Slice Completed (Issue #23)
+
+- Fixed a scheduler submission data race detected by race-enabled validation:
+  - Root cause: `scheduler.Submit` returned a live `rec.job` value that could be concurrently mutated by workers.
+  - Fix: return an immutable cloned snapshot captured before queue handoff.
+  - Added regression coverage to enforce queued snapshot semantics at submit time.
+- Improved default production resilience for memory persistence:
+  - Runtime default `state_path` changed from volatile `memory://...` to persistent `.openclaw-go/state/memory.json`.
+  - Added config test guard to prevent accidental regressions back to volatile defaults.
+- Hardened provider-aware login/session routing:
+  - Browser auth gate now resolves authorized sessions by provider and auto-injects provider-matching `loginSessionId` when omitted.
+  - Telegram runtime now recovers from stale scoped auth mappings and falls back to latest authorized provider session safely.
+  - Added regression tests for auth fallback behavior.
+- Reduced Telegram completion timeout risk under long histories:
+  - Added completion message budget trimming while preserving system prompt + most recent conversation turns.
+  - Added unit coverage for budget behavior preserving latest user context.
+- Validation completed (Dockerized Go toolchain):
+  - `gofmt -w` on all changed Go files
+  - `go test ./...`
+  - `go vet ./...`
+  - `go test -race ./...`
+
 ## 2026-02-28
 
 ### Phase 0 Completed

@@ -14,7 +14,7 @@ const (
 	defaultGatewayBind                   = "127.0.0.1:8765"
 	defaultHTTPBind                      = "127.0.0.1:8766"
 	defaultAuthMode                      = "auto"
-	defaultStatePath                     = "memory://openclaw-go-state"
+	defaultStatePath                     = ".openclaw-go/state/memory.json"
 	defaultProfile                       = "core"
 	defaultMemoryMaxEntries              = 10_000
 	defaultWebLoginTTLMinutes            = 1440

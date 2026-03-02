@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -22,6 +23,9 @@ func TestLoadDefaultsWhenConfigMissing(t *testing.T) {
 	}
 	if cfg.Runtime.StatePath != defaultStatePath {
 		t.Fatalf("unexpected default runtime.state_path: %s", cfg.Runtime.StatePath)
+	}
+	if strings.HasPrefix(strings.ToLower(cfg.Runtime.StatePath), "memory://") {
+		t.Fatalf("default runtime.state_path should be persistent, got %s", cfg.Runtime.StatePath)
 	}
 	if cfg.Runtime.Profile != defaultProfile {
 		t.Fatalf("unexpected default runtime.profile: %s", cfg.Runtime.Profile)
