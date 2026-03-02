@@ -26,8 +26,29 @@ func TestLoadDefaultsWhenConfigMissing(t *testing.T) {
 	if cfg.Runtime.Profile != defaultProfile {
 		t.Fatalf("unexpected default runtime.profile: %s", cfg.Runtime.Profile)
 	}
+	if cfg.Runtime.MemoryMaxEntries != defaultMemoryMaxEntries {
+		t.Fatalf("unexpected default runtime.memory_max_entries: %d", cfg.Runtime.MemoryMaxEntries)
+	}
 	if cfg.Runtime.WebLoginTTLMinutes != defaultWebLoginTTLMinutes {
 		t.Fatalf("unexpected default runtime.web_login_ttl_minutes: %d", cfg.Runtime.WebLoginTTLMinutes)
+	}
+	if cfg.Runtime.ModelCatalogRefreshTTLSeconds != defaultModelCatalogRefreshTTLSeconds {
+		t.Fatalf("unexpected default runtime.model_catalog_refresh_ttl_seconds: %d", cfg.Runtime.ModelCatalogRefreshTTLSeconds)
+	}
+	if !cfg.Runtime.TelegramLiveStreaming {
+		t.Fatalf("expected default runtime.telegram_live_streaming=true")
+	}
+	if cfg.Runtime.TelegramStreamChunkChars != defaultTelegramStreamChunkChars {
+		t.Fatalf("unexpected default runtime.telegram_stream_chunk_chars: %d", cfg.Runtime.TelegramStreamChunkChars)
+	}
+	if cfg.Runtime.TelegramStreamChunkDelayMs != defaultTelegramStreamChunkDelayMs {
+		t.Fatalf("unexpected default runtime.telegram_stream_chunk_delay_ms: %d", cfg.Runtime.TelegramStreamChunkDelayMs)
+	}
+	if !cfg.Runtime.TelegramTypingIndicators {
+		t.Fatalf("expected default runtime.telegram_typing_indicators=true")
+	}
+	if cfg.Runtime.TelegramTypingIntervalMs != defaultTelegramTypingIntervalMs {
+		t.Fatalf("unexpected default runtime.telegram_typing_interval_ms: %d", cfg.Runtime.TelegramTypingIntervalMs)
 	}
 	if !cfg.Runtime.BrowserBridge.Enabled {
 		t.Fatalf("expected default runtime.browser_bridge.enabled=true")
@@ -111,6 +132,13 @@ policy_bundle_path = "tmp/policy-bundle.json"
 	t.Setenv("OPENCLAW_GO_HTTP_BIND", "127.0.0.1:7654")
 	t.Setenv("OPENCLAW_GO_STATE_PATH", "tmp/override-state.json")
 	t.Setenv("OPENCLAW_GO_WEB_LOGIN_TTL_MINUTES", "180")
+	t.Setenv("OPENCLAW_GO_MEMORY_MAX_ENTRIES", "-1")
+	t.Setenv("OPENCLAW_GO_MODEL_CATALOG_REFRESH_TTL_SECONDS", "90")
+	t.Setenv("OPENCLAW_GO_TELEGRAM_LIVE_STREAMING", "false")
+	t.Setenv("OPENCLAW_GO_TELEGRAM_STREAM_CHUNK_CHARS", "420")
+	t.Setenv("OPENCLAW_GO_TELEGRAM_STREAM_CHUNK_DELAY_MS", "120")
+	t.Setenv("OPENCLAW_GO_TELEGRAM_TYPING_INDICATORS", "false")
+	t.Setenv("OPENCLAW_GO_TELEGRAM_TYPING_INTERVAL_MS", "2100")
 	t.Setenv("OPENCLAW_GO_TELEGRAM_BOT_TOKEN", "tg-token")
 	t.Setenv("OPENCLAW_GO_POLICY_BUNDLE_PATH", "tmp/policy-from-env.json")
 	t.Setenv("OPENCLAW_GO_EDR_TELEMETRY_PATH", "tmp/edr-feed.jsonl")
@@ -150,8 +178,29 @@ policy_bundle_path = "tmp/policy-bundle.json"
 	if cfg.Runtime.Profile != "edge" {
 		t.Fatalf("runtime.profile expected edge, got %s", cfg.Runtime.Profile)
 	}
+	if cfg.Runtime.MemoryMaxEntries != -1 {
+		t.Fatalf("runtime.memory_max_entries override not applied: %d", cfg.Runtime.MemoryMaxEntries)
+	}
 	if cfg.Runtime.WebLoginTTLMinutes != 180 {
 		t.Fatalf("runtime.web_login_ttl_minutes override not applied: %d", cfg.Runtime.WebLoginTTLMinutes)
+	}
+	if cfg.Runtime.ModelCatalogRefreshTTLSeconds != 90 {
+		t.Fatalf("runtime.model_catalog_refresh_ttl_seconds override not applied: %d", cfg.Runtime.ModelCatalogRefreshTTLSeconds)
+	}
+	if cfg.Runtime.TelegramLiveStreaming {
+		t.Fatalf("runtime.telegram_live_streaming override not applied")
+	}
+	if cfg.Runtime.TelegramStreamChunkChars != 420 {
+		t.Fatalf("runtime.telegram_stream_chunk_chars override not applied: %d", cfg.Runtime.TelegramStreamChunkChars)
+	}
+	if cfg.Runtime.TelegramStreamChunkDelayMs != 120 {
+		t.Fatalf("runtime.telegram_stream_chunk_delay_ms override not applied: %d", cfg.Runtime.TelegramStreamChunkDelayMs)
+	}
+	if cfg.Runtime.TelegramTypingIndicators {
+		t.Fatalf("runtime.telegram_typing_indicators override not applied")
+	}
+	if cfg.Runtime.TelegramTypingIntervalMs != 2100 {
+		t.Fatalf("runtime.telegram_typing_interval_ms override not applied: %d", cfg.Runtime.TelegramTypingIntervalMs)
 	}
 	if cfg.Runtime.BrowserBridge.Enabled {
 		t.Fatalf("browser bridge enabled env override should be false")
@@ -222,6 +271,22 @@ profile = "invalid"
 	_, err := Load(path)
 	if err == nil {
 		t.Fatalf("expected runtime.profile validation error")
+	}
+}
+
+func TestMemoryMaxEntriesValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "openclaw-go.toml")
+	content := `
+[runtime]
+memory_max_entries = -2
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed writing test config: %v", err)
+	}
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatalf("expected runtime.memory_max_entries validation error")
 	}
 }
 

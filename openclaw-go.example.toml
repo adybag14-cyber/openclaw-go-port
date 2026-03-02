@@ -12,7 +12,14 @@ auth_mode = "auto"
 audit_only = false
 state_path = "memory://openclaw-go-state"
 profile = "core"
+memory_max_entries = 10000 # set to 0 or -1 for unlimited retention
 web_login_ttl_minutes = 1440
+model_catalog_refresh_ttl_seconds = 300
+telegram_live_streaming = true
+telegram_stream_chunk_chars = 700
+telegram_stream_chunk_delay_ms = 250
+telegram_typing_indicators = true
+telegram_typing_interval_ms = 3500
 
 [channels.telegram]
 bot_token = ""

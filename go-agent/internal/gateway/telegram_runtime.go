@@ -219,6 +219,9 @@ func (s *Server) processTelegramUpdate(ctx context.Context, update telegramInbou
 		"source": "telegram-polling",
 	})
 
+	stopTyping := s.startTelegramTypingLoop(ctx, target)
+	defer stopTyping()
+
 	replyText, replyMeta, err := s.buildTelegramAssistantReply(ctx, target, sessionID, text)
 	if err != nil {
 		replyText = "I hit an upstream error while generating a response: " + conciseError(err, 240)
@@ -228,12 +231,7 @@ func (s *Server) processTelegramUpdate(ctx context.Context, update telegramInbou
 		}
 	}
 
-	receipt, sendErr := s.channels.Send(ctx, channels.SendRequest{
-		Channel:   "telegram",
-		To:        target,
-		Message:   replyText,
-		SessionID: sessionID,
-	})
+	receipt, sendErr := s.sendTelegramReply(ctx, target, sessionID, replyText)
 	if sendErr != nil {
 		return sendErr
 	}
@@ -295,6 +293,165 @@ func (s *Server) buildTelegramAssistantReply(ctx context.Context, target string,
 		"model":        model,
 		"toolProvider": invokeResult.Provider,
 	}, nil
+}
+
+func (s *Server) startTelegramTypingLoop(ctx context.Context, target string) context.CancelFunc {
+	if !s.cfg.Runtime.TelegramTypingIndicators {
+		return func() {}
+	}
+	loopCtx, cancel := context.WithCancel(ctx)
+	_ = s.channels.SendTyping(loopCtx, "telegram", target)
+
+	interval := time.Duration(s.cfg.Runtime.TelegramTypingIntervalMs) * time.Millisecond
+	if interval < time.Second {
+		interval = time.Second
+	}
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-loopCtx.Done():
+				return
+			case <-ticker.C:
+				_ = s.channels.SendTyping(loopCtx, "telegram", target)
+			}
+		}
+	}()
+	return cancel
+}
+
+func (s *Server) sendTelegramReply(ctx context.Context, target string, sessionID string, message string) (channels.SendReceipt, error) {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return channels.SendReceipt{}, errors.New("telegram reply is empty")
+	}
+
+	if !s.cfg.Runtime.TelegramLiveStreaming {
+		return s.channels.Send(ctx, channels.SendRequest{
+			Channel:   "telegram",
+			To:        target,
+			Message:   trimmed,
+			SessionID: sessionID,
+		})
+	}
+
+	chunks := splitTelegramStreamingChunks(trimmed, s.cfg.Runtime.TelegramStreamChunkChars)
+	if len(chunks) <= 1 {
+		return s.channels.Send(ctx, channels.SendRequest{
+			Channel:   "telegram",
+			To:        target,
+			Message:   trimmed,
+			SessionID: sessionID,
+		})
+	}
+
+	delay := time.Duration(s.cfg.Runtime.TelegramStreamChunkDelayMs) * time.Millisecond
+	if delay < 0 {
+		delay = 0
+	}
+
+	var first channels.SendReceipt
+	last := channels.SendReceipt{}
+	streamMessageIDs := make([]any, 0, len(chunks))
+	for idx, chunk := range chunks {
+		if idx > 0 && delay > 0 {
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return channels.SendReceipt{}, ctx.Err()
+			case <-timer.C:
+			}
+		}
+		if s.cfg.Runtime.TelegramTypingIndicators {
+			_ = s.channels.SendTyping(ctx, "telegram", target)
+		}
+		receipt, err := s.channels.Send(ctx, channels.SendRequest{
+			Channel:   "telegram",
+			To:        target,
+			Message:   chunk,
+			SessionID: sessionID,
+		})
+		if err != nil {
+			return channels.SendReceipt{}, err
+		}
+		if idx == 0 {
+			first = receipt
+		}
+		last = receipt
+		if receipt.Metadata != nil {
+			if messageID, ok := receipt.Metadata["messageId"]; ok {
+				streamMessageIDs = append(streamMessageIDs, messageID)
+			}
+		}
+	}
+
+	last.Message = trimmed
+	if last.Metadata == nil {
+		last.Metadata = map[string]any{}
+	}
+	last.Metadata["streaming"] = true
+	last.Metadata["streamChunkCount"] = len(chunks)
+	last.Metadata["streamChunkChars"] = s.cfg.Runtime.TelegramStreamChunkChars
+	last.Metadata["streamMessageIds"] = streamMessageIDs
+	if first.ID != "" {
+		last.ID = first.ID
+		last.CreatedAt = first.CreatedAt
+	}
+	return last, nil
+}
+
+func splitTelegramStreamingChunks(message string, maxRunes int) []string {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return []string{}
+	}
+	if maxRunes <= 0 {
+		maxRunes = 700
+	}
+	runes := []rune(trimmed)
+	if len(runes) <= maxRunes {
+		return []string{trimmed}
+	}
+
+	chunks := make([]string, 0, (len(runes)/maxRunes)+1)
+	for start := 0; start < len(runes); {
+		end := start + maxRunes
+		if end > len(runes) {
+			end = len(runes)
+		}
+		if end < len(runes) {
+			split := end
+			minSplit := start + (maxRunes / 2)
+			if minSplit < start {
+				minSplit = start
+			}
+			for i := end; i > minSplit; i-- {
+				if runes[i-1] == '\n' || runes[i-1] == ' ' {
+					split = i
+					break
+				}
+			}
+			end = split
+		}
+		if end <= start {
+			end = start + maxRunes
+			if end > len(runes) {
+				end = len(runes)
+			}
+		}
+		part := strings.TrimSpace(string(runes[start:end]))
+		if part != "" {
+			chunks = append(chunks, part)
+		}
+		start = end
+	}
+	if len(chunks) == 0 {
+		return []string{trimmed}
+	}
+	return chunks
 }
 
 func telegramReplyMessageFromCommandResult(result map[string]any) string {

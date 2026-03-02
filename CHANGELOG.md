@@ -5,6 +5,38 @@
 ### Highlights
 - No unreleased changes.
 
+## v2.11.0-go - 2026-03-02
+
+### Highlights
+- Added full runtime memory retention controls for Go Zvec/GraphLite memory store:
+  - `runtime.memory_max_entries` now controls retention limits.
+  - `0` or negative values enable unlimited memory retention mode.
+  - memory stats now expose `unlimited` mode status.
+- Added Telegram live reply streaming and typing indicators:
+  - configurable stream chunking and pacing for long replies.
+  - configurable typing pulse interval during generation.
+  - command and plain-text flows now use unified streaming send behavior.
+- Added dynamic model-catalog refresh for browser/keyless providers:
+  - OpenRouter models refresh from provider API with cache TTL controls.
+  - OpenCode models refresh from provider API with cache TTL controls.
+  - Qwen small-model aliases expanded (`qwen3-0.6b`, `qwen3-1.7b`, `qwen3-4b`, `qwen3-8b`).
+- Added runtime config/env support for catalog refresh and Telegram streaming/typing controls:
+  - `OPENCLAW_GO_MODEL_CATALOG_REFRESH_TTL_SECONDS`
+  - `OPENCLAW_GO_TELEGRAM_LIVE_STREAMING`
+  - `OPENCLAW_GO_TELEGRAM_STREAM_CHUNK_CHARS`
+  - `OPENCLAW_GO_TELEGRAM_STREAM_CHUNK_DELAY_MS`
+  - `OPENCLAW_GO_TELEGRAM_TYPING_INDICATORS`
+  - `OPENCLAW_GO_TELEGRAM_TYPING_INTERVAL_MS`
+
+### Validation
+- Dockerized formatting:
+  - `gofmt -w ./internal/channels/registry.go ./internal/channels/registry_test.go ./internal/channels/telegram_driver.go ./internal/config/config.go ./internal/config/config_test.go ./internal/gateway/compat.go ./internal/gateway/provider_catalog_test.go ./internal/gateway/server.go ./internal/gateway/telegram_commands.go ./internal/gateway/telegram_runtime.go ./internal/gateway/telegram_runtime_test.go ./internal/memory/store.go ./internal/memory/store_test.go ./internal/gateway/model_catalog_dynamic.go`
+- Dockerized test + vet:
+  - `go test ./...`
+  - `go vet ./...`
+- Release build matrix:
+  - `go-agent/scripts/build-matrix.sh 2.11.0 ../dist/release-v2.11.0-go-assets`
+
 ## v2.10.2-go - 2026-03-01
 
 ### Highlights

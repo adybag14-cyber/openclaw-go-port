@@ -16,7 +16,14 @@ const (
 	defaultAuthMode                      = "auto"
 	defaultStatePath                     = "memory://openclaw-go-state"
 	defaultProfile                       = "core"
+	defaultMemoryMaxEntries              = 10_000
 	defaultWebLoginTTLMinutes            = 1440
+	defaultModelCatalogRefreshTTLSeconds = 300
+	defaultTelegramLiveStreaming         = true
+	defaultTelegramStreamChunkChars      = 700
+	defaultTelegramStreamChunkDelayMs    = 250
+	defaultTelegramTypingIndicators      = true
+	defaultTelegramTypingIntervalMs      = 3500
 	defaultBrowserBridgeEndpoint         = "http://127.0.0.1:43010"
 	defaultBrowserBridgeRequestTimeoutMs = 180000
 	defaultBrowserBridgeRetries          = 2
@@ -46,11 +53,18 @@ type GatewayServerConfig struct {
 }
 
 type RuntimeConfig struct {
-	AuditOnly          bool                `toml:"audit_only"`
-	StatePath          string              `toml:"state_path"`
-	Profile            string              `toml:"profile"`
-	WebLoginTTLMinutes int                 `toml:"web_login_ttl_minutes"`
-	BrowserBridge      BrowserBridgeConfig `toml:"browser_bridge"`
+	AuditOnly                     bool                `toml:"audit_only"`
+	StatePath                     string              `toml:"state_path"`
+	Profile                       string              `toml:"profile"`
+	MemoryMaxEntries              int                 `toml:"memory_max_entries"`
+	WebLoginTTLMinutes            int                 `toml:"web_login_ttl_minutes"`
+	ModelCatalogRefreshTTLSeconds int                 `toml:"model_catalog_refresh_ttl_seconds"`
+	TelegramLiveStreaming         bool                `toml:"telegram_live_streaming"`
+	TelegramStreamChunkChars      int                 `toml:"telegram_stream_chunk_chars"`
+	TelegramStreamChunkDelayMs    int                 `toml:"telegram_stream_chunk_delay_ms"`
+	TelegramTypingIndicators      bool                `toml:"telegram_typing_indicators"`
+	TelegramTypingIntervalMs      int                 `toml:"telegram_typing_interval_ms"`
+	BrowserBridge                 BrowserBridgeConfig `toml:"browser_bridge"`
 }
 
 type BrowserBridgeConfig struct {
@@ -130,10 +144,17 @@ func Default() Config {
 			},
 		},
 		Runtime: RuntimeConfig{
-			AuditOnly:          false,
-			StatePath:          defaultStatePath,
-			Profile:            defaultProfile,
-			WebLoginTTLMinutes: defaultWebLoginTTLMinutes,
+			AuditOnly:                     false,
+			StatePath:                     defaultStatePath,
+			Profile:                       defaultProfile,
+			MemoryMaxEntries:              defaultMemoryMaxEntries,
+			WebLoginTTLMinutes:            defaultWebLoginTTLMinutes,
+			ModelCatalogRefreshTTLSeconds: defaultModelCatalogRefreshTTLSeconds,
+			TelegramLiveStreaming:         defaultTelegramLiveStreaming,
+			TelegramStreamChunkChars:      defaultTelegramStreamChunkChars,
+			TelegramStreamChunkDelayMs:    defaultTelegramStreamChunkDelayMs,
+			TelegramTypingIndicators:      defaultTelegramTypingIndicators,
+			TelegramTypingIntervalMs:      defaultTelegramTypingIntervalMs,
 			BrowserBridge: BrowserBridgeConfig{
 				Enabled:              true,
 				Endpoint:             defaultBrowserBridgeEndpoint,
@@ -236,7 +257,14 @@ func applyEnvOverrides(cfg *Config) {
 	setIfPresent("OPENCLAW_GO_GATEWAY_AUTH_MODE", &cfg.Gateway.Server.AuthMode)
 	setIfPresent("OPENCLAW_GO_STATE_PATH", &cfg.Runtime.StatePath)
 	setIfPresent("OPENCLAW_GO_RUNTIME_PROFILE", &cfg.Runtime.Profile)
+	setIntIfPresent("OPENCLAW_GO_MEMORY_MAX_ENTRIES", &cfg.Runtime.MemoryMaxEntries)
 	setIntIfPresent("OPENCLAW_GO_WEB_LOGIN_TTL_MINUTES", &cfg.Runtime.WebLoginTTLMinutes)
+	setIntIfPresent("OPENCLAW_GO_MODEL_CATALOG_REFRESH_TTL_SECONDS", &cfg.Runtime.ModelCatalogRefreshTTLSeconds)
+	setBoolIfPresent("OPENCLAW_GO_TELEGRAM_LIVE_STREAMING", &cfg.Runtime.TelegramLiveStreaming)
+	setIntIfPresent("OPENCLAW_GO_TELEGRAM_STREAM_CHUNK_CHARS", &cfg.Runtime.TelegramStreamChunkChars)
+	setIntIfPresent("OPENCLAW_GO_TELEGRAM_STREAM_CHUNK_DELAY_MS", &cfg.Runtime.TelegramStreamChunkDelayMs)
+	setBoolIfPresent("OPENCLAW_GO_TELEGRAM_TYPING_INDICATORS", &cfg.Runtime.TelegramTypingIndicators)
+	setIntIfPresent("OPENCLAW_GO_TELEGRAM_TYPING_INTERVAL_MS", &cfg.Runtime.TelegramTypingIntervalMs)
 	setBoolIfPresent("OPENCLAW_GO_BROWSER_BRIDGE_ENABLED", &cfg.Runtime.BrowserBridge.Enabled)
 	setIfPresent("OPENCLAW_GO_BROWSER_BRIDGE_ENDPOINT", &cfg.Runtime.BrowserBridge.Endpoint)
 	setIntIfPresent("OPENCLAW_GO_BROWSER_BRIDGE_REQUEST_TIMEOUT_MS", &cfg.Runtime.BrowserBridge.RequestTimeoutMs)
@@ -326,8 +354,23 @@ func validate(cfg Config) error {
 	default:
 		return errors.New("runtime.profile must be one of: core, edge")
 	}
+	if cfg.Runtime.MemoryMaxEntries < -1 {
+		return errors.New("runtime.memory_max_entries must be -1 (unlimited), 0 (unlimited), or a positive integer")
+	}
 	if cfg.Runtime.WebLoginTTLMinutes <= 0 {
 		return errors.New("runtime.web_login_ttl_minutes must be > 0")
+	}
+	if cfg.Runtime.ModelCatalogRefreshTTLSeconds <= 0 {
+		return errors.New("runtime.model_catalog_refresh_ttl_seconds must be > 0")
+	}
+	if cfg.Runtime.TelegramStreamChunkChars <= 0 {
+		return errors.New("runtime.telegram_stream_chunk_chars must be > 0")
+	}
+	if cfg.Runtime.TelegramStreamChunkDelayMs < 0 {
+		return errors.New("runtime.telegram_stream_chunk_delay_ms cannot be negative")
+	}
+	if cfg.Runtime.TelegramTypingIntervalMs <= 0 {
+		return errors.New("runtime.telegram_typing_interval_ms must be > 0")
 	}
 	if cfg.Runtime.BrowserBridge.Enabled && strings.TrimSpace(cfg.Runtime.BrowserBridge.Endpoint) == "" {
 		return errors.New("runtime.browser_bridge.endpoint cannot be empty when browser bridge is enabled")

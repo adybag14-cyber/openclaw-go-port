@@ -180,3 +180,34 @@ func TestTelegramLongMessageSplitsAcrossMultipleSends(t *testing.T) {
 		t.Fatalf("expected chunked metadata true")
 	}
 }
+
+func TestRegistrySendTypingTelegram(t *testing.T) {
+	typingCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		if r.URL.Path != "/bottoken/sendChatAction" {
+			t.Fatalf("unexpected telegram path: %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]any
+		_ = json.Unmarshal(body, &payload)
+		if payload["action"] != "typing" {
+			t.Fatalf("unexpected action payload: %v", payload["action"])
+		}
+		typingCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+	}))
+	defer server.Close()
+	t.Setenv("OPENCLAW_GO_TELEGRAM_API_BASE", server.URL)
+
+	reg := NewRegistry("token", "chat-typing")
+	if err := reg.SendTyping(context.Background(), "telegram", ""); err != nil {
+		t.Fatalf("telegram typing failed: %v", err)
+	}
+	if typingCalls != 1 {
+		t.Fatalf("expected one sendChatAction call, got %d", typingCalls)
+	}
+}

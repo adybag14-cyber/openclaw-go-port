@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	webbridge "github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/bridge/web"
@@ -180,6 +182,16 @@ func TestExpandedModelCatalogListsProviderSpecificModels(t *testing.T) {
 	if !containsQwenPrimary {
 		t.Fatalf("expected qwen3.5-397b-a17b in qwen model list, got %v", qwenModels)
 	}
+	containsQwenSmall := false
+	for _, model := range qwenModels {
+		if model == "qwen3-0.6b" {
+			containsQwenSmall = true
+			break
+		}
+	}
+	if !containsQwenSmall {
+		t.Fatalf("expected qwen3-0.6b in qwen model list, got %v", qwenModels)
+	}
 
 	openRouterModels := compat.listModelIDsForProvider("openrouter")
 	containsSlashScoped := false
@@ -191,6 +203,76 @@ func TestExpandedModelCatalogListsProviderSpecificModels(t *testing.T) {
 	}
 	if !containsSlashScoped {
 		t.Fatalf("expected slash-scoped openrouter model in provider list, got %v", openRouterModels)
+	}
+}
+
+func TestCompatModelsListRefreshesOpenRouterCatalog(t *testing.T) {
+	openRouterAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"qwen/qwen3-0.6b:free","name":"Qwen 3 0.6B Free"},{"id":"qwen/qwen3-4b:free","name":"Qwen 3 4B Free"}]}`))
+	}))
+	defer openRouterAPI.Close()
+	t.Setenv("OPENCLAW_GO_OPENROUTER_MODELS_URL", openRouterAPI.URL)
+
+	cfg := config.Default()
+	cfg.Runtime.ModelCatalogRefreshTTLSeconds = 1
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+
+	result, derr := s.handleCompatMethod(context.Background(), "models-list-openrouter-refresh", "models.list", map[string]any{
+		"provider": "openrouter",
+	})
+	if derr != nil {
+		t.Fatalf("models.list openrouter failed: %+v", *derr)
+	}
+	models, ok := result["models"].([]map[string]any)
+	if !ok || len(models) == 0 {
+		t.Fatalf("expected non-empty openrouter models list")
+	}
+	found := false
+	for _, model := range models {
+		if toString(model["id"], "") == "openrouter/qwen/qwen3-0.6b:free" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected refreshed openrouter model in models.list payload, got %v", models)
+	}
+}
+
+func TestCompatModelsListRefreshesOpenCodeCatalog(t *testing.T) {
+	openCodeAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"claude-opus-4-6"},{"id":"qwen3-coder-30b-a3b-instruct"}]}`))
+	}))
+	defer openCodeAPI.Close()
+	t.Setenv("OPENCLAW_GO_OPENCODE_MODELS_URL", openCodeAPI.URL)
+
+	cfg := config.Default()
+	cfg.Runtime.ModelCatalogRefreshTTLSeconds = 1
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+
+	result, derr := s.handleCompatMethod(context.Background(), "models-list-opencode-refresh", "models.list", map[string]any{
+		"provider": "opencode",
+	})
+	if derr != nil {
+		t.Fatalf("models.list opencode failed: %+v", *derr)
+	}
+	models, ok := result["models"].([]map[string]any)
+	if !ok || len(models) == 0 {
+		t.Fatalf("expected non-empty opencode models list")
+	}
+	found := false
+	for _, model := range models {
+		if toString(model["id"], "") == "opencode/qwen3-coder-30b-a3b-instruct" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected refreshed opencode model in models.list payload, got %v", models)
 	}
 }
 

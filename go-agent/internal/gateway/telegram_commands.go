@@ -123,10 +123,23 @@ func (s *Server) handleTelegramSetCommand(target string, args []string) (channel
 
 func (s *Server) handleTelegramModelCommand(target string, args []string) (channels.SendReceipt, error) {
 	currentProvider, currentModel := s.compat.getTelegramModelSelection(target)
+	action := ""
+	if len(args) > 0 {
+		action = strings.ToLower(strings.TrimSpace(args[0]))
+	}
+	refreshProvider := currentProvider
+	switch {
+	case len(args) == 0 || action == "status":
+		refreshProvider = currentProvider
+	case action == "list" && len(args) >= 2:
+		refreshProvider = args[1]
+	}
+	_ = s.refreshCompatModelCatalog(context.Background(), refreshProvider)
+
 	descriptors := s.compat.listModelDescriptors()
 	availableProviders := s.compat.listModelProviders()
 
-	if len(args) == 0 || strings.EqualFold(args[0], "status") {
+	if len(args) == 0 || action == "status" {
 		available := s.compat.listModelIDs()
 		return telegramCommandReceipt(target, fmt.Sprintf("Current model: `%s/%s`\nAvailable providers: %s", currentProvider, currentModel, strings.Join(availableProviders, ", ")), map[string]any{
 			"type":            "model.status",
@@ -139,7 +152,6 @@ func (s *Server) handleTelegramModelCommand(target string, args []string) (chann
 		}), nil
 	}
 
-	action := strings.ToLower(strings.TrimSpace(args[0]))
 	switch action {
 	case "list":
 		if len(args) < 2 {

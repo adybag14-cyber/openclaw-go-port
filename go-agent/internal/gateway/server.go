@@ -102,7 +102,7 @@ func New(cfg config.Config, build buildinfo.Info) *Server {
 			},
 		}),
 		channels: channels.NewRegistryFromConfig(cfg.Channels),
-		memory:   memory.NewStore(cfg.Runtime.StatePath, 10_000),
+		memory:   memory.NewStore(cfg.Runtime.StatePath, cfg.Runtime.MemoryMaxEntries),
 		runtime:  agentruntime.New(cfg.Runtime),
 		state:    state.NewStore(),
 		guard: security.NewGuard(security.GuardConfig{
@@ -467,6 +467,16 @@ func (s *Server) handleConfigGet() map[string]any {
 			"authMode": s.resolveAuthMode(),
 		},
 		"runtime": s.runtime.Snapshot(),
+		"modelCatalog": map[string]any{
+			"refreshTtlSeconds": s.cfg.Runtime.ModelCatalogRefreshTTLSeconds,
+		},
+		"telegramRuntime": map[string]any{
+			"liveStreaming":      s.cfg.Runtime.TelegramLiveStreaming,
+			"streamChunkChars":   s.cfg.Runtime.TelegramStreamChunkChars,
+			"streamChunkDelayMs": s.cfg.Runtime.TelegramStreamChunkDelayMs,
+			"typingIndicators":   s.cfg.Runtime.TelegramTypingIndicators,
+			"typingIntervalMs":   s.cfg.Runtime.TelegramTypingIntervalMs,
+		},
 		"browserBridge": map[string]any{
 			"enabled":              s.cfg.Runtime.BrowserBridge.Enabled,
 			"endpoint":             s.cfg.Runtime.BrowserBridge.Endpoint,

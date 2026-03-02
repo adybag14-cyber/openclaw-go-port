@@ -46,14 +46,22 @@ type persistedState struct {
 }
 
 func NewStore(path string, maxEntries int) *Store {
-	if maxEntries < 100 {
+	switch {
+	case maxEntries <= 0:
+		// 0/-1/negative values are treated as unlimited retention.
+		maxEntries = 0
+	case maxEntries < 100:
 		maxEntries = 100
+	}
+	initialCapacity := maxEntries
+	if initialCapacity <= 0 {
+		initialCapacity = 1024
 	}
 	s := &Store{
 		path:       strings.TrimSpace(path),
 		persist:    shouldPersist(path),
 		maxEntries: maxEntries,
-		entries:    make([]MessageEntry, 0, maxEntries),
+		entries:    make([]MessageEntry, 0, initialCapacity),
 		vectors:    map[string]map[string]float64{},
 		graph:      map[string]map[string]int{},
 	}
@@ -70,7 +78,7 @@ func (s *Store) Append(entry MessageEntry) {
 		entry.ID = "msg-" + time.Now().UTC().Format("20060102150405.000000000")
 	}
 	s.entries = append(s.entries, entry)
-	if len(s.entries) > s.maxEntries {
+	if s.maxEntries > 0 && len(s.entries) > s.maxEntries {
 		start := len(s.entries) - s.maxEntries
 		s.entries = append([]MessageEntry(nil), s.entries[start:]...)
 	}
@@ -229,6 +237,8 @@ func (s *Store) Stats() map[string]any {
 		"vectors":    len(s.vectors),
 		"graphNodes": len(s.graph),
 		"graphEdges": graphEdges,
+		"maxEntries": s.maxEntries,
+		"unlimited":  s.maxEntries <= 0,
 		"persistent": s.persist,
 		"statePath":  s.path,
 		"lastError":  s.lastError,
@@ -327,7 +337,7 @@ func (s *Store) load() {
 	}
 	s.mu.Lock()
 	s.entries = append([]MessageEntry(nil), data.Entries...)
-	if len(s.entries) > s.maxEntries {
+	if s.maxEntries > 0 && len(s.entries) > s.maxEntries {
 		start := len(s.entries) - s.maxEntries
 		s.entries = append([]MessageEntry(nil), s.entries[start:]...)
 	}

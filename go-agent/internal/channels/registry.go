@@ -47,6 +47,10 @@ type Driver interface {
 	Logout(context.Context, string) (bool, error)
 }
 
+type TypingDriver interface {
+	SendTyping(context.Context, string) error
+}
+
 type Registry struct {
 	mu      sync.RWMutex
 	drivers map[string]Driver
@@ -133,6 +137,18 @@ func (r *Registry) Send(ctx context.Context, req SendRequest) (SendReceipt, erro
 		receipt.Status = "delivered"
 	}
 	return receipt, nil
+}
+
+func (r *Registry) SendTyping(ctx context.Context, channel string, target string) error {
+	driver, canonical, ok := r.Resolve(channel)
+	if !ok {
+		return fmt.Errorf("unsupported channel %q", channel)
+	}
+	typingDriver, ok := driver.(TypingDriver)
+	if !ok {
+		return fmt.Errorf("channel %q does not support typing indicators", canonical)
+	}
+	return typingDriver.SendTyping(ctx, target)
 }
 
 func (r *Registry) Logout(ctx context.Context, channel string, accountID string) (bool, error) {

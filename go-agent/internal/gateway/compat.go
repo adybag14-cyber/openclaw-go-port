@@ -44,6 +44,9 @@ type compatState struct {
 	telegramAuthByTarget     map[string]string
 	telegramAuthByScope      map[string]string
 	providerAPIKeys          map[string]string
+	modelCatalogRefreshedAt  map[string]time.Time
+	modelCatalogLastError    map[string]string
+	modelCatalogModelCounts  map[string]int
 
 	agentSeq   int
 	agents     map[string]map[string]any
@@ -221,6 +224,38 @@ func newCompatState() *compatState {
 				"aliases":    []string{"qwen-flash"},
 			},
 			{
+				"id":         "qwen3-0.6b",
+				"name":       "Qwen 3 0.6B",
+				"mode":       "instant",
+				"provider":   "qwen",
+				"capability": "small-fast",
+				"aliases":    []string{"qwen-0.6b", "qwen3-0.6b-instruct"},
+			},
+			{
+				"id":         "qwen3-1.7b",
+				"name":       "Qwen 3 1.7B",
+				"mode":       "instant",
+				"provider":   "qwen",
+				"capability": "small-fast",
+				"aliases":    []string{"qwen-1.7b", "qwen3-1.7b-instruct"},
+			},
+			{
+				"id":         "qwen3-4b",
+				"name":       "Qwen 3 4B",
+				"mode":       "instant",
+				"provider":   "qwen",
+				"capability": "small-balanced",
+				"aliases":    []string{"qwen-4b", "qwen3-4b-instruct"},
+			},
+			{
+				"id":         "qwen3-8b",
+				"name":       "Qwen 3 8B",
+				"mode":       "thinking",
+				"provider":   "qwen",
+				"capability": "balanced",
+				"aliases":    []string{"qwen-8b", "qwen3-8b-instruct"},
+			},
+			{
 				"id":         "inception/mercury",
 				"name":       "Mercury 2",
 				"mode":       "thinking",
@@ -266,6 +301,9 @@ func newCompatState() *compatState {
 		telegramAuthByTarget:     map[string]string{},
 		telegramAuthByScope:      map[string]string{},
 		providerAPIKeys:          map[string]string{},
+		modelCatalogRefreshedAt:  map[string]time.Time{},
+		modelCatalogLastError:    map[string]string{},
+		modelCatalogModelCounts:  map[string]int{},
 		agentSeq:                 0,
 		agents:                   map[string]map[string]any{},
 		agentFiles:               map[string]map[string]map[string]any{},
@@ -708,6 +746,17 @@ func (c *compatState) hasProviderAPIKey(provider string) bool {
 	return ok
 }
 
+func (c *compatState) getProviderAPIKey(provider string) string {
+	normalizedProvider := normalizeProviderAlias(provider)
+	if normalizedProvider == "" {
+		return ""
+	}
+	c.mu.RLock()
+	value := strings.TrimSpace(c.providerAPIKeys[normalizedProvider])
+	c.mu.RUnlock()
+	return value
+}
+
 func (c *compatState) edgeTopologySnapshot() map[string]any {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -1048,7 +1097,7 @@ func (s *Server) handleCompatMethod(ctx context.Context, requestID string, canon
 	case "voicewake.set":
 		return s.handleCompatVoiceWake(params), nil
 	case "models.list":
-		return s.handleCompatModelsList(params)
+		return s.handleCompatModelsList(ctx, params)
 	case "agent.identity.get":
 		return map[string]any{
 			"id":        "openclaw-go",
@@ -1812,7 +1861,7 @@ func (s *Server) handleCompatTTSConvert(params map[string]any) (map[string]any, 
 	}, nil
 }
 
-func (s *Server) handleCompatModelsList(params map[string]any) (map[string]any, *dispatchError) {
+func (s *Server) handleCompatModelsList(ctx context.Context, params map[string]any) (map[string]any, *dispatchError) {
 	allowed := map[string]struct{}{
 		"provider": {},
 		"limit":    {},
@@ -1828,6 +1877,7 @@ func (s *Server) handleCompatModelsList(params map[string]any) (map[string]any, 
 	}
 
 	requestedProvider := normalizeProviderAlias(toString(params["provider"], ""))
+	refreshStatus := s.refreshCompatModelCatalog(ctx, requestedProvider)
 	models := s.compat.listModelDescriptors()
 	filtered := make([]map[string]any, 0, len(models))
 	for _, model := range models {
@@ -1874,6 +1924,9 @@ func (s *Server) handleCompatModelsList(params map[string]any) (map[string]any, 
 		payload["providerRequested"] = requestedProvider
 	}
 	payload["providers"] = providers
+	if len(refreshStatus) > 0 {
+		payload["catalogRefresh"] = refreshStatus
+	}
 	return payload, nil
 }
 

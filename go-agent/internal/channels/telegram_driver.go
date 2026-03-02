@@ -195,6 +195,72 @@ func (d *telegramDriver) sendSingleMessage(ctx context.Context, token string, ta
 	return parsed.Result, nil
 }
 
+func (d *telegramDriver) SendTyping(ctx context.Context, target string) error {
+	token := strings.TrimSpace(d.botToken)
+	if token == "" {
+		d.setDisconnected("telegram bot token is not configured")
+		return errors.New("telegram bot token is not configured")
+	}
+
+	resolvedTarget := strings.TrimSpace(target)
+	if resolvedTarget == "" {
+		resolvedTarget = strings.TrimSpace(d.defaultTarget)
+	}
+	if resolvedTarget == "" {
+		return errors.New("telegram target chat id is required")
+	}
+
+	payload := map[string]any{
+		"chat_id": resolvedTarget,
+		"action":  "typing",
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	endpoint := fmt.Sprintf("%s/bot%s/sendChatAction", TelegramAPIBase(), token)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := d.httpClient.Do(request)
+	if err != nil {
+		d.setDisconnected(err.Error())
+		return err
+	}
+	defer response.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		description := strings.TrimSpace(string(body))
+		if description == "" {
+			description = fmt.Sprintf("telegram sendChatAction returned HTTP %d", response.StatusCode)
+		}
+		d.setDisconnected(description)
+		return fmt.Errorf("telegram sendChatAction failed: %s", description)
+	}
+
+	var parsed telegramAPIResponse[bool]
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		d.setDisconnected("invalid telegram response: " + err.Error())
+		return fmt.Errorf("telegram sendChatAction invalid response: %w", err)
+	}
+	if !parsed.OK {
+		description := strings.TrimSpace(parsed.Description)
+		if description == "" {
+			description = "telegram sendChatAction rejected request"
+		}
+		d.setDisconnected(description)
+		return errors.New(description)
+	}
+
+	d.setConnected()
+	return nil
+}
+
 func splitTelegramMessage(message string, maxRunes int) []string {
 	trimmed := strings.TrimSpace(message)
 	if trimmed == "" {

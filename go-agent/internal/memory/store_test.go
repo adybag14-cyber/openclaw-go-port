@@ -131,3 +131,27 @@ func TestStoreTrimAndRemoveSession(t *testing.T) {
 		t.Fatalf("expected persisted removal of s1 entries, got %d", got)
 	}
 }
+
+func TestStoreUnlimitedRetentionMode(t *testing.T) {
+	store := NewStore("memory://unlimited", 0)
+	for i := 0; i < 180; i++ {
+		store.Append(MessageEntry{
+			SessionID: "s-unlimited",
+			Channel:   "webchat",
+			Method:    "chat.send",
+			Role:      "user",
+			Text:      "entry",
+		})
+	}
+
+	if got := store.Count(); got != 180 {
+		t.Fatalf("expected unlimited store to retain all entries, got %d", got)
+	}
+	stats := store.Stats()
+	if unlimited, _ := stats["unlimited"].(bool); !unlimited {
+		t.Fatalf("expected unlimited=true in stats")
+	}
+	if maxEntries, _ := stats["maxEntries"].(int); maxEntries != 0 {
+		t.Fatalf("expected maxEntries=0 for unlimited mode, got %v", stats["maxEntries"])
+	}
+}
