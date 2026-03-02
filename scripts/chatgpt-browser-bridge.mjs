@@ -475,25 +475,65 @@ function normalizeMessageText(content) {
   return "";
 }
 
-function extractUserPrompt(messages) {
+function extractPromptFromMessages(messages) {
   if (!Array.isArray(messages)) {
     return "";
   }
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const item = messages[i];
+  const normalized = [];
+  for (const item of messages) {
     if (!item || typeof item !== "object") {
       continue;
     }
     const role = trimText(item.role).toLowerCase();
-    if (role !== "user") {
+    if (!role) {
       continue;
     }
     const text = normalizeMessageText(item.content);
     if (text) {
-      return text;
+      normalized.push({ role, text });
     }
   }
-  return "";
+  if (normalized.length === 0) {
+    return "";
+  }
+  if (normalized.length === 1 && normalized[0].role === "user") {
+    return normalized[0].text;
+  }
+
+  const roleLabel = (role) => {
+    switch (role) {
+      case "system":
+        return "System";
+      case "assistant":
+        return "Assistant";
+      case "tool":
+        return "Tool";
+      default:
+        return "User";
+    }
+  };
+
+  const maxPromptChars = 12_000;
+  const sections = [];
+  let totalChars = 0;
+  for (let i = normalized.length - 1; i >= 0; i -= 1) {
+    const entry = normalized[i];
+    const section = `[${roleLabel(entry.role)}]\n${entry.text}`;
+    if (totalChars > 0 && totalChars + section.length > maxPromptChars) {
+      break;
+    }
+    sections.unshift(section);
+    totalChars += section.length;
+  }
+  if (sections.length === 0) {
+    return normalized[normalized.length - 1].text;
+  }
+
+  return [
+    "Use the full conversation context below and continue as the assistant.",
+    sections.join("\n\n"),
+    "Respond directly to the latest user request with the best actionable answer.",
+  ].join("\n\n");
 }
 
 async function readSessionState(page) {
@@ -726,7 +766,7 @@ async function submitPromptAndWaitForReply(page, profile, prompt, timeoutMs) {
 }
 
 async function completeViaPage(page, payload) {
-  const prompt = extractUserPrompt(payload.messages);
+  const prompt = extractPromptFromMessages(payload.messages);
   if (!prompt) {
     throw new Error("no user prompt provided");
   }

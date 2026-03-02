@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/channels"
+	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/memory"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/scheduler"
 	toolruntime "github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/tools/runtime"
 )
@@ -40,7 +42,8 @@ type telegramInboundEntry struct {
 }
 
 type telegramInboundChat struct {
-	ID int64 `json:"id"`
+	ID   int64  `json:"id"`
+	Type string `json:"type"`
 }
 
 type telegramInboundUser struct {
@@ -48,6 +51,12 @@ type telegramInboundUser struct {
 	IsBot    bool   `json:"is_bot"`
 	Username string `json:"username"`
 }
+
+const (
+	telegramContextHistoryLimit = 24
+	telegramContextRecallLimit  = 6
+	telegramContextMaxChars     = 1200
+)
 
 func (u telegramInboundUpdate) pickMessage() *telegramInboundEntry {
 	if u.Message != nil {
@@ -176,7 +185,7 @@ func (s *Server) processTelegramUpdate(ctx context.Context, update telegramInbou
 	}
 
 	target := strconv.FormatInt(message.Chat.ID, 10)
-	sessionID := fmt.Sprintf("tg-chat-%d", message.Chat.ID)
+	sessionID := resolveTelegramSessionID(message)
 
 	if strings.HasPrefix(text, "/") {
 		job := scheduler.Job{
@@ -261,21 +270,36 @@ func (s *Server) buildTelegramAssistantReply(ctx context.Context, target string,
 	invokeCtx, cancel := context.WithTimeout(ctx, timeout+10*time.Second)
 	defer cancel()
 
+	loginSessionID := strings.TrimSpace(s.compat.getTelegramAuthScoped(target, provider, ""))
+	if loginSessionID != "" && !s.webLogin.IsAuthorized(loginSessionID) {
+		// Clear stale scoped auth mapping so Telegram flows recover instead of looping on an invalid login ID.
+		s.compat.setTelegramAuthScoped(target, provider, "", "")
+		loginSessionID = ""
+	}
+
+	messages := s.buildTelegramCompletionMessages(sessionID, userMessage)
+	input := map[string]any{
+		"provider": provider,
+		"model":    model,
+		"messages": messages,
+	}
+	if loginSessionID != "" {
+		input["loginSessionId"] = loginSessionID
+	}
+
 	invokeResult, err := s.tools.Invoke(invokeCtx, toolruntime.Request{
 		Tool:      "browser.request",
 		SessionID: sessionID,
-		Input: map[string]any{
-			"provider": provider,
-			"model":    model,
-			"messages": []map[string]any{
-				{"role": "user", "content": userMessage},
-			},
-		},
+		Input:     input,
 	})
 	if err != nil {
 		return "", map[string]any{
 			"provider": provider,
 			"model":    model,
+			"auth": map[string]any{
+				"loginSessionId": loginSessionID,
+				"hasAuthorized":  s.webLogin.HasAuthorizedSession(),
+			},
 		}, err
 	}
 
@@ -292,7 +316,171 @@ func (s *Server) buildTelegramAssistantReply(ctx context.Context, target string,
 		"provider":     provider,
 		"model":        model,
 		"toolProvider": invokeResult.Provider,
+		"messages": map[string]any{
+			"contextCount": len(messages),
+		},
+		"auth": map[string]any{
+			"loginSessionId": loginSessionID,
+			"hasAuthorized":  s.webLogin.HasAuthorizedSession(),
+		},
 	}, nil
+}
+
+func resolveTelegramSessionID(message *telegramInboundEntry) string {
+	if message == nil {
+		return "tg-chat-unknown"
+	}
+	chatType := strings.ToLower(strings.TrimSpace(message.Chat.Type))
+	switch chatType {
+	case "group", "supergroup", "channel":
+		if message.From.ID != 0 {
+			return fmt.Sprintf("tg-chat-%d-user-%d", message.Chat.ID, message.From.ID)
+		}
+	}
+	return fmt.Sprintf("tg-chat-%d", message.Chat.ID)
+}
+
+func (s *Server) buildTelegramCompletionMessages(sessionID string, userMessage string) []map[string]any {
+	trimmedUser := strings.TrimSpace(userMessage)
+	toolSummary := summarizeTelegramToolCatalog(s.tools.Catalog())
+	recallSummary := summarizeTelegramRecall(s.memory.RecallSynthesis(trimmedUser, telegramContextRecallLimit))
+
+	systemPrompt := strings.Join([]string{
+		"You are OpenClaw Go running in Telegram with runtime tool capabilities.",
+		"If asked about capabilities, do not claim you have no tools or no memory unless context explicitly indicates failure.",
+		"Available runtime tools:",
+		toolSummary,
+		"Long-term memory recall (Zvec + GraphLite):",
+		recallSummary,
+		"Use conversation history and recalled memory when forming your answer.",
+	}, "\n")
+
+	messages := make([]map[string]any, 0, telegramContextHistoryLimit+3)
+	messages = append(messages, map[string]any{
+		"role":    "system",
+		"content": systemPrompt,
+	})
+
+	history := s.memory.HistoryBySession(sessionID, telegramContextHistoryLimit)
+	for _, entry := range history {
+		role := strings.ToLower(strings.TrimSpace(entry.Role))
+		switch role {
+		case "user", "assistant", "system", "tool":
+		default:
+			continue
+		}
+		content := trimTelegramPromptText(entry.Text, telegramContextMaxChars)
+		if content == "" {
+			continue
+		}
+		messages = append(messages, map[string]any{
+			"role":    role,
+			"content": content,
+		})
+	}
+
+	if trimmedUser != "" {
+		if !telegramMessagesEndWithUser(messages, trimmedUser) {
+			messages = append(messages, map[string]any{
+				"role":    "user",
+				"content": trimmedUser,
+			})
+		}
+	}
+
+	return messages
+}
+
+func summarizeTelegramToolCatalog(catalog []toolruntime.ToolSpec) string {
+	if len(catalog) == 0 {
+		return "- none reported"
+	}
+
+	seen := map[string]bool{}
+	tools := make([]string, 0, len(catalog))
+	for _, spec := range catalog {
+		tool := strings.TrimSpace(spec.Tool)
+		if tool == "" || seen[tool] {
+			continue
+		}
+		seen[tool] = true
+		tools = append(tools, tool)
+	}
+	sort.Strings(tools)
+	if len(tools) > 40 {
+		tools = tools[:40]
+	}
+
+	lines := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		lines = append(lines, "- "+tool)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func summarizeTelegramRecall(recall map[string]any) string {
+	if len(recall) == 0 {
+		return "- no recall available"
+	}
+	lines := make([]string, 0, 16)
+	if query := strings.TrimSpace(toString(recall["query"], "")); query != "" {
+		lines = append(lines, "- query: "+query)
+	}
+	if semantic, ok := recall["semantic"].([]memory.MessageEntry); ok && len(semantic) > 0 {
+		for idx, entry := range semantic {
+			if idx >= 6 {
+				break
+			}
+			role := strings.TrimSpace(entry.Role)
+			if role == "" {
+				role = "memory"
+			}
+			text := trimTelegramPromptText(entry.Text, 220)
+			if text == "" {
+				continue
+			}
+			lines = append(lines, fmt.Sprintf("- semantic[%d] (%s): %s", idx+1, role, text))
+		}
+	}
+	if neighbors, ok := recall["neighbors"].([]memory.GraphEdge); ok && len(neighbors) > 0 {
+		for idx, edge := range neighbors {
+			if idx >= 6 {
+				break
+			}
+			lines = append(lines, fmt.Sprintf("- graph[%d]: %s -> %s (%d)", idx+1, edge.From, edge.To, edge.Weight))
+		}
+	}
+	if len(lines) == 0 {
+		return "- no recall available"
+	}
+	return strings.Join(lines, "\n")
+}
+
+func trimTelegramPromptText(text string, limit int) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ""
+	}
+	if limit <= 0 || len(trimmed) <= limit {
+		return trimmed
+	}
+	if limit <= 3 {
+		return trimmed[:limit]
+	}
+	return trimmed[:limit-3] + "..."
+}
+
+func telegramMessagesEndWithUser(messages []map[string]any, userMessage string) bool {
+	if len(messages) == 0 {
+		return false
+	}
+	last := messages[len(messages)-1]
+	role := strings.ToLower(strings.TrimSpace(toString(last["role"], "")))
+	if role != "user" {
+		return false
+	}
+	content := strings.TrimSpace(toString(last["content"], ""))
+	return content == strings.TrimSpace(userMessage)
 }
 
 func (s *Server) startTelegramTypingLoop(ctx context.Context, target string) context.CancelFunc {

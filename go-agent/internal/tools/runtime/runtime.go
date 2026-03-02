@@ -1036,6 +1036,9 @@ func toBrowserCompletionPayload(input map[string]any) (map[string]any, bool) {
 	if value, ok := input["max_tokens"]; ok {
 		payload["max_tokens"] = value
 	}
+	if loginSessionID := strings.TrimSpace(toString(input["loginSessionId"], toString(input["login_session_id"], ""))); loginSessionID != "" {
+		payload["loginSessionId"] = loginSessionID
+	}
 	return payload, true
 }
 

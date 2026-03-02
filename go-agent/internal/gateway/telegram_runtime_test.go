@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	webbridge "github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/bridge/web"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/buildinfo"
 	"github.com/adybag14-cyber/openclaw-go-port/go-agent/internal/config"
 )
@@ -63,10 +64,18 @@ func TestProcessTelegramUpdateCommandSendsReply(t *testing.T) {
 }
 
 func TestProcessTelegramUpdateTextBridgesAssistantReply(t *testing.T) {
+	var bridgeMu sync.Mutex
+	var bridgePayload map[string]any
 	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
 			t.Fatalf("unexpected bridge endpoint: %s", r.URL.Path)
 		}
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]any
+		_ = json.Unmarshal(body, &payload)
+		bridgeMu.Lock()
+		bridgePayload = payload
+		bridgeMu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"cmpl-test","model":"gpt-5.2","choices":[{"message":{"role":"assistant","content":"bridge-response-ok"}}]}`))
 	}))
@@ -129,6 +138,12 @@ func TestProcessTelegramUpdateTextBridgesAssistantReply(t *testing.T) {
 	}
 	if typingCalls == 0 {
 		t.Fatalf("expected at least one typing indicator call")
+	}
+	bridgeMu.Lock()
+	defer bridgeMu.Unlock()
+	rawMessages, ok := bridgePayload["messages"].([]any)
+	if !ok || len(rawMessages) < 2 {
+		t.Fatalf("expected bridge payload to include system + user context, got: %#v", bridgePayload["messages"])
 	}
 }
 
@@ -249,5 +264,105 @@ func TestProcessTelegramUpdateTextStreamsLongReplies(t *testing.T) {
 	}
 	if typingCalls == 0 {
 		t.Fatalf("expected typing indicators during streamed reply")
+	}
+}
+
+func TestProcessTelegramUpdateUsesSessionHistoryAndAuthScope(t *testing.T) {
+	var bridgeMu sync.Mutex
+	bridgePayloads := make([]map[string]any, 0, 4)
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected bridge endpoint: %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]any
+		_ = json.Unmarshal(body, &payload)
+		bridgeMu.Lock()
+		bridgePayloads = append(bridgePayloads, payload)
+		bridgeMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cmpl-test","model":"gpt-5.2","choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer bridge.Close()
+
+	telegramAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/bottoken/sendMessage", "/bottoken/sendChatAction":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":101,"chat":{"id":901},"date":1700000000}}`))
+		default:
+			t.Fatalf("unexpected telegram endpoint: %s", r.URL.Path)
+		}
+	}))
+	defer telegramAPI.Close()
+	t.Setenv("OPENCLAW_GO_TELEGRAM_API_BASE", telegramAPI.URL)
+
+	cfg := config.Default()
+	cfg.Channels.Telegram.BotToken = "token"
+	cfg.Runtime.StatePath = "memory://telegram-runtime-history-auth"
+	cfg.Runtime.BrowserBridge.Enabled = true
+	cfg.Runtime.BrowserBridge.Endpoint = bridge.URL
+	cfg.Runtime.BrowserBridge.RequestTimeoutMs = 5000
+	cfg.Runtime.TelegramStreamChunkDelayMs = 0
+
+	s := New(cfg, buildinfo.Default())
+	defer s.Close()
+
+	login := s.webLogin.Start(webbridge.StartOptions{Provider: "chatgpt", Model: "gpt-5.2"})
+	if _, err := s.webLogin.Complete(login.ID, login.Code); err != nil {
+		t.Fatalf("failed to authorize login session: %v", err)
+	}
+	s.compat.setTelegramAuthScoped("901", "chatgpt", "", login.ID)
+
+	first := telegramInboundUpdate{
+		UpdateID: 10,
+		Message: &telegramInboundEntry{
+			Text: "my name is ady",
+			Chat: telegramInboundChat{ID: 901},
+			From: telegramInboundUser{ID: 55, IsBot: false},
+		},
+	}
+	second := telegramInboundUpdate{
+		UpdateID: 11,
+		Message: &telegramInboundEntry{
+			Text: "what is my name?",
+			Chat: telegramInboundChat{ID: 901},
+			From: telegramInboundUser{ID: 55, IsBot: false},
+		},
+	}
+	if err := s.processTelegramUpdate(context.Background(), first); err != nil {
+		t.Fatalf("first telegram update failed: %v", err)
+	}
+	if err := s.processTelegramUpdate(context.Background(), second); err != nil {
+		t.Fatalf("second telegram update failed: %v", err)
+	}
+
+	bridgeMu.Lock()
+	defer bridgeMu.Unlock()
+	if len(bridgePayloads) < 2 {
+		t.Fatalf("expected at least two bridge payloads, got %d", len(bridgePayloads))
+	}
+	secondPayload := bridgePayloads[len(bridgePayloads)-1]
+	if got := strings.TrimSpace(toString(secondPayload["loginSessionId"], "")); got != login.ID {
+		t.Fatalf("expected loginSessionId %q in second payload, got %q", login.ID, got)
+	}
+	rawMessages, ok := secondPayload["messages"].([]any)
+	if !ok || len(rawMessages) < 3 {
+		t.Fatalf("expected second payload to contain rich context, got %#v", secondPayload["messages"])
+	}
+	foundPriorFact := false
+	for _, raw := range rawMessages {
+		msg, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		content := strings.ToLower(strings.TrimSpace(toString(msg["content"], "")))
+		if strings.Contains(content, "my name is ady") {
+			foundPriorFact = true
+			break
+		}
+	}
+	if !foundPriorFact {
+		t.Fatalf("expected second payload messages to include prior session memory")
 	}
 }

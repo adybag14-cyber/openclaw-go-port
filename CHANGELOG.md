@@ -5,6 +5,34 @@
 ### Highlights
 - No unreleased changes.
 
+## v2.12.0-go - 2026-03-02
+
+### Highlights
+- Fixed Telegram assistant context depth so browser completions are no longer single-turn:
+  - Telegram completion payload now includes system context + session history + current user turn.
+  - Context includes memory recall synthesis from Zvec + GraphLite (`semantic` + `graph` recall summaries).
+- Fixed Telegram auth/session propagation into browser completion requests:
+  - scoped auth login session IDs are forwarded in `browser.request` payloads.
+  - stale scoped login IDs are auto-cleared when no longer authorized.
+- Fixed capability exposure in chat context:
+  - Telegram system context now includes runtime tool catalog summaries so the model no longer reports "no tools" by default.
+- Fixed browser bridge prompt shaping:
+  - bridge now builds prompt context from the full message list instead of only the last user message.
+  - keeps bounded context windows while preserving recent conversation continuity.
+- Runtime config template updates for practical persistence + unlimited memory behavior:
+  - `openclaw-go.example.toml` now defaults to persistent state path (`.openclaw-go/state/memory.json`).
+  - example runtime now defaults `memory_max_entries = 0` (unlimited retention mode).
+
+### Validation
+- Node syntax check:
+  - `node --check scripts/chatgpt-browser-bridge.mjs`
+- Dockerized formatting + validation:
+  - `gofmt -w ./internal/gateway/telegram_runtime.go ./internal/gateway/telegram_runtime_test.go ./internal/tools/runtime/runtime.go`
+  - `go test ./...`
+  - `go vet ./...`
+- Release build matrix:
+  - `go-agent/scripts/build-matrix.sh 2.12.0 ../dist/release-v2.12.0-go-assets`
+
 ## v2.11.0-go - 2026-03-02
 
 ### Highlights
