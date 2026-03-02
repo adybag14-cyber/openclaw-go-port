@@ -128,6 +128,22 @@ node scripts/chatgpt-browser-auth.mjs --engine lightpanda --lightpanda-endpoint 
 
 Lightpanda is wired as an optional backend with automatic fallback to Playwright/Puppeteer.
 
+### Docker Stability Gate (Release Blocker for OS Runtime Track)
+
+Before cutting releases for the OS-runtime track, run the stability gate:
+
+```powershell
+./scripts/docker-stability-gate.ps1
+./scripts/docker-stability-gate.ps1 -WithBridge
+```
+
+```bash
+WITH_BRIDGE=0 ./scripts/docker-stability-gate.sh
+WITH_BRIDGE=1 ./scripts/docker-stability-gate.sh
+```
+
+A non-zero exit blocks release for that scope.
+
 ## Build Release Artifacts
 
 ### PowerShell

@@ -1125,3 +1125,35 @@
   - `go test ./...` (Dockerized)
   - `go vet ./...` (Dockerized)
   - bridge `/health` smoke in default and Lightpanda-configured modes.
+
+### OS Runtime Track (Issue #22) - Phase 0 Bootstrapped + Release Docker Gate Added
+
+- Created dedicated OS-runtime phase plan:
+  - `docs/go-port/os-runtime-phase-plan.md`
+- Added Docker stability release gate scripts:
+  - `scripts/docker-stability-gate.ps1`
+  - `scripts/docker-stability-gate.sh`
+- Updated docs/checklists to enforce release blocking on Docker instability:
+  - `README.md` (stability-gate command section)
+  - `docs/go-port/phase-checklist.md` (Issue #22 phase rows)
+- Gate policy now explicit:
+  - no release for this track until stability gate passes for the scoped deployment profile.
+
+### OS Runtime Track (Issue #22) - Phase 1 Baseline Evidence (Core Pass, Bridge Blocked)
+
+- Added gate hardening to reduce transient startup false-negatives:
+  - startup warmup timeout before probe counting
+  - bridge image pull retries before compose up
+- Validation results:
+  - core profile pass:
+    - `./scripts/docker-stability-gate.ps1 -Probes 4 -IntervalSeconds 5 -StartupTimeoutSeconds 120`
+    - result: `4/4` probes passed.
+  - bridge profile blocked:
+    - `./scripts/docker-stability-gate.ps1 -WithBridge -Probes 4 -IntervalSeconds 5 -StartupTimeoutSeconds 120 -BridgeImagePullRetries 3`
+    - result: failed before probe sweep due bridge image pull failure:
+      - `mcr.microsoft.com/playwright:v1.52.0-noble`
+      - manifest HEAD request returned `EOF` for all retries.
+- Outcome:
+  - Phase 1A complete (core stability proven).
+  - Phase 1B pending (bridge stability not yet proven due upstream image availability/network path).
+  - release for OS-runtime track remains blocked until Phase 1B passes.

@@ -72,3 +72,11 @@
 - [x] Remove Rust runtime/manifests/workflows from `main`
 - [x] Keep Go runtime/docs/release flow as the only active implementation path
 - [x] Re-validate Go runtime after cleanup
+
+## OS Runtime Track (Issue #22)
+
+- [x] Phase 0: architecture split + Docker stability gate scripts committed
+- [x] Phase 1A: core Docker stability baseline captured (`docker-compose.yml`)
+- [ ] Phase 1B: bridge Docker stability baseline captured (`docker-compose + bridge`)
+- [ ] Phase 1 complete (core + bridge evidence both passing)
+- [ ] Release only after Docker stability gate passes for scope
